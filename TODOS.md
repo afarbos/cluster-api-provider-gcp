@@ -92,10 +92,15 @@ See docs/proposals/config-connector-integration.md for full design.
 - [x] `create-management-cluster-kcc` target — full kind + CAPI + CAPG + KCC
 - [x] `install-config-connector` standalone target
 
-## Phase 7: Documentation (blocking alpha PR review)
+## Phase 7: Templates + Documentation ✅ DONE
 
-- [ ] Update cluster templates to use new API type shapes (`templates/cluster-template-gke-config-connector-*.yaml`)
-- [ ] Write user guide: quickstart, auth setup, example cluster manifest
+- [x] `cluster-template-gke-kcc.yaml` — Simple non-topology flavor (Cluster + KCC resources + MachinePool)
+- [x] `cluster-template-gke-kcc-clusterclass.yaml` — ClusterClass definition with variables (`project`, `region`, `machineType`) and JSON patches into typed KCC fields
+- [x] `cluster-template-gke-kcc-topology.yaml` — Topology-based Cluster referencing the ClusterClass
+
+## Remaining (blocking alpha PR review)
+
+- [ ] Write user guide: quickstart, auth setup, end-to-end walkthrough
 
 ## Future / Beta
 

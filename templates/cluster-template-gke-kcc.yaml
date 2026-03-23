@@ -1,0 +1,100 @@
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: Cluster
+metadata:
+  name: "${CLUSTER_NAME}"
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks: ["10.100.0.0/16"]
+    services:
+      cidrBlocks: ["10.101.0.0/16"]
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: GCPKCCManagedCluster
+    name: "${CLUSTER_NAME}"
+  controlPlaneRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: GCPKCCManagedControlPlane
+    name: "${CLUSTER_NAME}-control-plane"
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: GCPKCCManagedCluster
+metadata:
+  name: "${CLUSTER_NAME}"
+spec:
+  network:
+    metadata:
+      name: "${CLUSTER_NAME}-network"
+      annotations:
+        cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
+    spec:
+      autoCreateSubnetworks: false
+      routingMode: REGIONAL
+  subnetwork:
+    metadata:
+      name: "${CLUSTER_NAME}-subnet"
+      annotations:
+        cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
+    spec:
+      ipCidrRange: "10.0.0.0/20"
+      region: "${GCP_REGION}"
+      networkRef:
+        name: "${CLUSTER_NAME}-network"
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: GCPKCCManagedControlPlane
+metadata:
+  name: "${CLUSTER_NAME}-control-plane"
+spec:
+  cluster:
+    metadata:
+      name: "${CLUSTER_NAME}"
+      annotations:
+        cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
+    spec:
+      location: "${GCP_REGION}"
+      initialNodeCount: 1
+      removeDefaultNodePool: true
+      networkRef:
+        name: "${CLUSTER_NAME}-network"
+      subnetworkRef:
+        name: "${CLUSTER_NAME}-subnet"
+      ipAllocationPolicy:
+        clusterSecondaryRangeName: pods
+        servicesSecondaryRangeName: services
+  version: "${KUBERNETES_VERSION}"
+---
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: MachinePool
+metadata:
+  name: "${CLUSTER_NAME}-mp-0"
+spec:
+  clusterName: "${CLUSTER_NAME}"
+  replicas: ${WORKER_MACHINE_COUNT}
+  template:
+    spec:
+      bootstrap:
+        dataSecretName: ""
+      clusterName: "${CLUSTER_NAME}"
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: GCPKCCMachinePool
+        name: "${CLUSTER_NAME}-mp-0"
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: GCPKCCMachinePool
+metadata:
+  name: "${CLUSTER_NAME}-mp-0"
+spec:
+  nodePool:
+    metadata:
+      name: "${CLUSTER_NAME}-mp-0"
+      annotations:
+        cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
+    spec:
+      location: "${GCP_REGION}"
+      clusterRef:
+        name: "${CLUSTER_NAME}"
+      nodeConfig:
+        machineType: e2-medium
