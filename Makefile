@@ -118,6 +118,7 @@ YQ :=  $(TOOLS_BIN_DIR)/$(YQ_BIN)-$(YQ_VER)
 
 # Other tools versions
 CERT_MANAGER_VER := v1.16.3
+CONF_CONNECTOR_VER ?= 1.125.0
 
 # Define Docker related variables. Releases should modify and double check these vars.
 export GCP_PROJECT ?= $(shell gcloud config get-value project)
@@ -520,6 +521,14 @@ create-management-cluster: $(KUSTOMIZE) $(ENVSUBST) $(KIND) $(KUBECTL)
 	# required sleep for when creating management and workload cluster simultaneously
 	sleep 10
 	@echo 'Set kubectl context to the kind management cluster by running "$(KUBECTL) config set-context kind-clusterapi"'
+
+.PHONY: create-management-cluster-kcc
+create-management-cluster-kcc: create-management-cluster ## Create kind management cluster with Config Connector installed.
+	./hack/install-config-connector.sh $(CONF_CONNECTOR_VER)
+
+.PHONY: install-config-connector
+install-config-connector: ## Install Config Connector operator on the current cluster (set CONF_CONNECTOR_VER to override version).
+	./hack/install-config-connector.sh $(CONF_CONNECTOR_VER)
 
 .PHONY: create-workload-cluster
 create-workload-cluster: $(KUSTOMIZE) $(ENVSUBST) $(KUBECTL)
