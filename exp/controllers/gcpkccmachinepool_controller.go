@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 	"sigs.k8s.io/cluster-api/util/secret"
+	exputil "sigs.k8s.io/cluster-api/exp/util"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -57,6 +58,7 @@ type GCPKCCMachinePoolReconciler struct {
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=gcpkccmachinepools/finalizers,verbs=update
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/status,verbs=get;list;watch
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=gcpkccmanagedcontrolplanes,verbs=get;list;watch
+//+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=machinepools;machinepools/status,verbs=get;list;watch
 //+kubebuilder:rbac:groups=container.cnrm.cloud.google.com,resources=containernodepools,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
@@ -143,7 +145,7 @@ func (r *GCPKCCMachinePoolReconciler) reconcileNormal(ctx context.Context, clust
 	}
 
 	// Gate on GCPKCCManagedControlPlane being initialized.
-	cpInitialized, err := r.isControlPlaneInitialized(ctx, cluster)
+	kccCP, cpInitialized, err := r.getControlPlane(ctx, cluster)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -159,8 +161,18 @@ func (r *GCPKCCMachinePoolReconciler) reconcileNormal(ctx context.Context, clust
 		return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
 	}
 
+	// Fetch owner MachinePool for replicas, version, failure domains.
+	machinePool, err := exputil.GetOwnerMachinePool(ctx, r.Client, kccMP.ObjectMeta)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("getting owner MachinePool: %w", err)
+	}
+	if machinePool == nil {
+		log.Info("Owner MachinePool not yet set, requeuing")
+		return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
+	}
+
 	// Reconcile ContainerNodePool.
-	nodePool, err := r.reconcileNodePool(ctx, cluster, kccMP)
+	nodePool, err := r.reconcileNodePool(ctx, cluster, kccMP, kccCP, machinePool)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconciling ContainerNodePool: %w", err)
 	}
@@ -230,8 +242,25 @@ func (r *GCPKCCMachinePoolReconciler) reconcileDelete(ctx context.Context, _ *cl
 }
 
 // reconcileNodePool creates or retrieves the ContainerNodePool KCC resource.
-func (r *GCPKCCMachinePoolReconciler) reconcileNodePool(ctx context.Context, _ *clusterv1.Cluster, kccMP *infrav1exp.GCPKCCMachinePool) (*kcccontainerv1beta1.ContainerNodePool, error) {
+func (r *GCPKCCMachinePoolReconciler) reconcileNodePool(
+	ctx context.Context,
+	_ *clusterv1.Cluster,
+	kccMP *infrav1exp.GCPKCCMachinePool,
+	kccCP *infrav1exp.GCPKCCManagedControlPlane,
+	machinePool *clusterv1.MachinePool,
+) (*kcccontainerv1beta1.ContainerNodePool, error) {
 	desired := kccMP.Spec.NodePool.DeepCopy()
+
+	applyContainerNodePoolDefaults(desired, kccMP.Name, machinePool.Spec.ClusterName, kccCP.Spec.Cluster.Spec.Location)
+
+	// Build version pointer from MachinePool template (MachineSpec.Version is a string, not *string).
+	var versionPtr *string
+	if machinePool.Spec.Template.Spec.Version != "" {
+		v := machinePool.Spec.Template.Spec.Version
+		versionPtr = &v
+	}
+	applyContainerNodePoolOverrides(desired, machinePool.Spec.Replicas, versionPtr, machinePool.Spec.FailureDomains)
+
 	desired.Namespace = kccMP.Namespace
 	setOwnerRef(&desired.ObjectMeta, kccMP, "GCPKCCMachinePool")
 
@@ -294,8 +323,12 @@ func (r *GCPKCCMachinePoolReconciler) reconcileProviderIDList(ctx context.Contex
 
 // deleteNodePool deletes the ContainerNodePool and returns true when it is gone.
 func (r *GCPKCCMachinePoolReconciler) deleteNodePool(ctx context.Context, kccMP *infrav1exp.GCPKCCMachinePool) (bool, error) {
+	nodePoolName := kccMP.Spec.NodePool.Name
+	if nodePoolName == "" {
+		nodePoolName = kccMP.Name
+	}
 	existing := &kcccontainerv1beta1.ContainerNodePool{}
-	err := r.Get(ctx, types.NamespacedName{Name: kccMP.Spec.NodePool.Name, Namespace: kccMP.Namespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: nodePoolName, Namespace: kccMP.Namespace}, existing)
 	if apierrors.IsNotFound(err) {
 		return true, nil
 	}
@@ -310,23 +343,24 @@ func (r *GCPKCCMachinePoolReconciler) deleteNodePool(ctx context.Context, kccMP 
 	return false, nil
 }
 
-// isControlPlaneInitialized returns true if the GCPKCCManagedControlPlane is initialized.
-func (r *GCPKCCMachinePoolReconciler) isControlPlaneInitialized(ctx context.Context, cluster *clusterv1.Cluster) (bool, error) {
+// getControlPlane fetches the GCPKCCManagedControlPlane and returns it alongside a bool
+// indicating whether it is initialized. Returns (nil, false, nil) when the CP is not yet found.
+func (r *GCPKCCMachinePoolReconciler) getControlPlane(ctx context.Context, cluster *clusterv1.Cluster) (*infrav1exp.GCPKCCManagedControlPlane, bool, error) {
 	if !cluster.Spec.ControlPlaneRef.IsDefined() {
-		return false, nil
+		return nil, false, nil
 	}
 	cpRef := cluster.Spec.ControlPlaneRef
 	kccCP := &infrav1exp.GCPKCCManagedControlPlane{}
 	if err := r.Get(ctx, types.NamespacedName{Name: cpRef.Name, Namespace: cluster.Namespace}, kccCP); err != nil {
 		if apierrors.IsNotFound(err) {
-			return false, nil
+			return nil, false, nil
 		}
-		return false, err
+		return nil, false, err
 	}
 	if kccCP.Status.Initialization == nil || kccCP.Status.Initialization.ControlPlaneInitialized == nil {
-		return false, nil
+		return kccCP, false, nil
 	}
-	return *kccCP.Status.Initialization.ControlPlaneInitialized, nil
+	return kccCP, *kccCP.Status.Initialization.ControlPlaneInitialized, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

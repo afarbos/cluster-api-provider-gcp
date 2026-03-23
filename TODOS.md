@@ -96,30 +96,11 @@ See docs/proposals/config-connector-integration.md for full design.
 - [x] `cluster-template-gke-kcc-clusterclass.yaml` — ClusterClass definition with variables (`project`, `region`, `machineType`) and JSON patches into typed KCC fields
 - [x] `cluster-template-gke-kcc-topology.yaml` — Topology-based Cluster referencing the ClusterClass
 
-## Phase 8: Reasonable Defaults + CAPI Field Overrides
+## Phase 8: Reasonable Defaults + CAPI Field Overrides ✅ DONE
 
-### New file: `exp/controllers/gcpkcc_defaults.go` (6 pure functions)
-
-- [ ] `applyNetworkDefaults(network, clusterName)` — name, autoCreateSubnetworks, routingMode
-- [ ] `applySubnetworkDefaults(subnet, clusterName, networkName)` — name, networkRef
-- [ ] `applyContainerClusterDefaults(cluster, capiClusterName, networkName, subnetworkName, subnetworkRegion, hasSecondaryRanges)` — name, networkRef, subnetworkRef, initialNodeCount, networkingMode, ipAllocationPolicy, `cnrm.cloud.google.com/remove-default-node-pool` annotation, location from subnet region
-- [ ] `applyContainerClusterOverrides(cluster, version)` — force `spec.minMasterVersion` from `GCPKCCManagedControlPlane.Spec.Version`
-- [ ] `applyContainerNodePoolDefaults(nodePool, machinePoolName, capiClusterName, clusterLocation)` — name, clusterRef (from `MachinePool.Spec.ClusterName`), location
-- [ ] `applyContainerNodePoolOverrides(nodePool, replicas, version, failureDomains)` — force `spec.initialNodeCount` from `MachinePool.Spec.Replicas`, `spec.version` from `MachinePool.Spec.Template.Spec.Version`, `spec.nodeLocations` from `MachinePool.Spec.FailureDomains`
-
-### Controller wiring
-
-- [ ] `gcpkccmanagedcluster_controller.go`: wire `applyNetworkDefaults` + `applySubnetworkDefaults`, update delete helpers for empty names
-- [ ] `gcpkccmanagedcontrolplane_controller.go`: refactor `isInfraClusterProvisioned` → `getInfraCluster` (return object), wire defaults + overrides, derive location from subnet region
-- [ ] `gcpkccmachinepool_controller.go`: refactor `isControlPlaneInitialized` → `getControlPlane` (return object), fetch owner MachinePool via `exputil.GetOwnerMachinePool`, wire defaults + overrides
-
-### Tests: `exp/controllers/gcpkcc_defaults_test.go`
-
-- [ ] Table-driven tests for all 6 functions (empty→defaulted, already-set→not-overridden, overrides always win)
-
-### Templates update
-
-- [ ] Update `cluster-template-gke-kcc.yaml` to use minimal YAML (rely on defaults)
+- [x] `gcpkcc_defaults.go`: 6 pure functions — `applyNetworkDefaults`, `applySubnetworkDefaults`, `applyContainerClusterDefaults` (incl. `cnrm.cloud.google.com/remove-default-node-pool` annotation, location from subnet region), `applyContainerClusterOverrides` (minMasterVersion), `applyContainerNodePoolDefaults` (clusterRef from MachinePool.Spec.ClusterName), `applyContainerNodePoolOverrides` (initialNodeCount, version, nodeLocations)
+- [x] Controller wiring: `getInfraCluster` returns `*GCPKCCManagedCluster`, `getControlPlane` returns `*GCPKCCManagedControlPlane`, fetches owner MachinePool via `exputil.GetOwnerMachinePool`, delete helpers handle empty names
+- [x] `gcpkcc_defaults_test.go`: 31 table-driven tests across all 6 functions
 
 ## Remaining (blocking alpha PR review)
 

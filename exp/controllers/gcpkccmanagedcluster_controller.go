@@ -149,7 +149,7 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, cl
 	}
 
 	// Reconcile ComputeSubnetwork.
-	subnet, err := r.reconcileSubnetwork(ctx, cluster, kccCluster)
+	subnet, err := r.reconcileSubnetwork(ctx, cluster, kccCluster, network.Name)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconciling ComputeSubnetwork: %w", err)
 	}
@@ -226,6 +226,7 @@ func (r *GCPKCCManagedClusterReconciler) reconcileDelete(ctx context.Context, _ 
 // reconcileNetwork ensures the ComputeNetwork KCC resource exists.
 func (r *GCPKCCManagedClusterReconciler) reconcileNetwork(ctx context.Context, _ *clusterv1.Cluster, kccCluster *infrav1exp.GCPKCCManagedCluster) (*kcccomputev1beta1.ComputeNetwork, error) {
 	desired := kccCluster.Spec.Network.DeepCopy()
+	applyNetworkDefaults(desired, kccCluster.Name)
 	desired.Namespace = kccCluster.Namespace
 	setOwnerRef(&desired.ObjectMeta, kccCluster, "GCPKCCManagedCluster")
 
@@ -245,8 +246,9 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNetwork(ctx context.Context, _
 
 // reconcileSubnetwork ensures the ComputeSubnetwork KCC resource exists,
 // patching in secondary IP ranges from Cluster.Spec.ClusterNetwork.
-func (r *GCPKCCManagedClusterReconciler) reconcileSubnetwork(ctx context.Context, cluster *clusterv1.Cluster, kccCluster *infrav1exp.GCPKCCManagedCluster) (*kcccomputev1beta1.ComputeSubnetwork, error) {
+func (r *GCPKCCManagedClusterReconciler) reconcileSubnetwork(ctx context.Context, cluster *clusterv1.Cluster, kccCluster *infrav1exp.GCPKCCManagedCluster, networkName string) (*kcccomputev1beta1.ComputeSubnetwork, error) {
 	desired := kccCluster.Spec.Subnetwork.DeepCopy()
+	applySubnetworkDefaults(desired, kccCluster.Name, networkName)
 	desired.Namespace = kccCluster.Namespace
 	setOwnerRef(&desired.ObjectMeta, kccCluster, "GCPKCCManagedCluster")
 
@@ -300,8 +302,12 @@ func patchSubnetworkCIDRs(subnet *kcccomputev1beta1.ComputeSubnetwork, cluster *
 
 // deleteNetwork deletes the ComputeNetwork and returns true when it is gone.
 func (r *GCPKCCManagedClusterReconciler) deleteNetwork(ctx context.Context, kccCluster *infrav1exp.GCPKCCManagedCluster) (bool, error) {
+	networkName := kccCluster.Spec.Network.Name
+	if networkName == "" {
+		networkName = kccCluster.Name
+	}
 	existing := &kcccomputev1beta1.ComputeNetwork{}
-	err := r.Get(ctx, types.NamespacedName{Name: kccCluster.Spec.Network.Name, Namespace: kccCluster.Namespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: networkName, Namespace: kccCluster.Namespace}, existing)
 	if apierrors.IsNotFound(err) {
 		return true, nil
 	}
@@ -318,8 +324,12 @@ func (r *GCPKCCManagedClusterReconciler) deleteNetwork(ctx context.Context, kccC
 
 // deleteSubnetwork deletes the ComputeSubnetwork and returns true when it is gone.
 func (r *GCPKCCManagedClusterReconciler) deleteSubnetwork(ctx context.Context, kccCluster *infrav1exp.GCPKCCManagedCluster) (bool, error) {
+	subnetName := kccCluster.Spec.Subnetwork.Name
+	if subnetName == "" {
+		subnetName = kccCluster.Name
+	}
 	existing := &kcccomputev1beta1.ComputeSubnetwork{}
-	err := r.Get(ctx, types.NamespacedName{Name: kccCluster.Spec.Subnetwork.Name, Namespace: kccCluster.Namespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: subnetName, Namespace: kccCluster.Namespace}, existing)
 	if apierrors.IsNotFound(err) {
 		return true, nil
 	}

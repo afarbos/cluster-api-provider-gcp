@@ -157,7 +157,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 	}
 
 	// Gate on GCPKCCManagedCluster being provisioned.
-	infraClusterReady, err := r.isInfraClusterProvisioned(ctx, cluster)
+	kccCluster, infraClusterReady, err := r.getInfraCluster(ctx, cluster)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -174,7 +174,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 	}
 
 	// Reconcile ContainerCluster.
-	containerCluster, err := r.reconcileContainerCluster(ctx, cluster, kccCP)
+	containerCluster, err := r.reconcileContainerCluster(ctx, cluster, kccCP, kccCluster)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconciling ContainerCluster: %w", err)
 	}
@@ -230,7 +230,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 	return ctrl.Result{}, nil
 }
 
-func (r *GCPKCCManagedControlPlaneReconciler) reconcileDelete(ctx context.Context, _ *clusterv1.Cluster, kccCP *infrav1exp.GCPKCCManagedControlPlane) (ctrl.Result, error) {
+func (r *GCPKCCManagedControlPlaneReconciler) reconcileDelete(ctx context.Context, cluster *clusterv1.Cluster, kccCP *infrav1exp.GCPKCCManagedControlPlane) (ctrl.Result, error) {
 	log := log.FromContext(ctx).WithValues("controller", "gcpkccmanagedcontrolplane", "action", "delete")
 	log.Info("Reconciling delete GCPKCCManagedControlPlane")
 
@@ -238,7 +238,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileDelete(ctx context.Contex
 		return ctrl.Result{}, nil
 	}
 
-	clusterDeleted, err := r.deleteContainerCluster(ctx, kccCP)
+	clusterDeleted, err := r.deleteContainerCluster(ctx, kccCP, cluster.Name)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -252,8 +252,22 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileDelete(ctx context.Contex
 }
 
 // reconcileContainerCluster creates or retrieves the ContainerCluster KCC resource.
-func (r *GCPKCCManagedControlPlaneReconciler) reconcileContainerCluster(ctx context.Context, _ *clusterv1.Cluster, kccCP *infrav1exp.GCPKCCManagedControlPlane) (*kcccontainerv1beta1.ContainerCluster, error) {
+func (r *GCPKCCManagedControlPlaneReconciler) reconcileContainerCluster(ctx context.Context, cluster *clusterv1.Cluster, kccCP *infrav1exp.GCPKCCManagedControlPlane, kccCluster *infrav1exp.GCPKCCManagedCluster) (*kcccontainerv1beta1.ContainerCluster, error) {
 	desired := kccCP.Spec.Cluster.DeepCopy()
+
+	hasSecondaryRanges := len(cluster.Spec.ClusterNetwork.Pods.CIDRBlocks) > 0 ||
+		len(cluster.Spec.ClusterNetwork.Services.CIDRBlocks) > 0
+
+	applyContainerClusterDefaults(
+		desired,
+		cluster.Name,
+		kccCluster.Status.NetworkName,
+		kccCluster.Status.SubnetworkName,
+		kccCluster.Spec.Subnetwork.Spec.Region,
+		hasSecondaryRanges,
+	)
+	applyContainerClusterOverrides(desired, kccCP.Spec.Version)
+
 	desired.Namespace = kccCP.Namespace
 	setOwnerRef(&desired.ObjectMeta, kccCP, "GCPKCCManagedControlPlane")
 
@@ -367,9 +381,13 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileKubeconfig(ctx context.Co
 }
 
 // deleteContainerCluster deletes the ContainerCluster and returns true when it is gone.
-func (r *GCPKCCManagedControlPlaneReconciler) deleteContainerCluster(ctx context.Context, kccCP *infrav1exp.GCPKCCManagedControlPlane) (bool, error) {
+func (r *GCPKCCManagedControlPlaneReconciler) deleteContainerCluster(ctx context.Context, kccCP *infrav1exp.GCPKCCManagedControlPlane, capiClusterName string) (bool, error) {
+	clusterName := kccCP.Spec.Cluster.Name
+	if clusterName == "" {
+		clusterName = capiClusterName
+	}
 	existing := &kcccontainerv1beta1.ContainerCluster{}
-	err := r.Get(ctx, types.NamespacedName{Name: kccCP.Spec.Cluster.Name, Namespace: kccCP.Namespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: clusterName, Namespace: kccCP.Namespace}, existing)
 	if apierrors.IsNotFound(err) {
 		return true, nil
 	}
@@ -384,23 +402,24 @@ func (r *GCPKCCManagedControlPlaneReconciler) deleteContainerCluster(ctx context
 	return false, nil
 }
 
-// isInfraClusterProvisioned returns true if the GCPKCCManagedCluster is provisioned.
-func (r *GCPKCCManagedControlPlaneReconciler) isInfraClusterProvisioned(ctx context.Context, cluster *clusterv1.Cluster) (bool, error) {
+// getInfraCluster fetches the GCPKCCManagedCluster and returns it alongside a bool indicating
+// whether it is provisioned. Returns (nil, false, nil) when the cluster is not yet found.
+func (r *GCPKCCManagedControlPlaneReconciler) getInfraCluster(ctx context.Context, cluster *clusterv1.Cluster) (*infrav1exp.GCPKCCManagedCluster, bool, error) {
 	if !cluster.Spec.InfrastructureRef.IsDefined() {
-		return false, nil
+		return nil, false, nil
 	}
 	infraRef := cluster.Spec.InfrastructureRef
 	kccCluster := &infrav1exp.GCPKCCManagedCluster{}
 	if err := r.Get(ctx, types.NamespacedName{Name: infraRef.Name, Namespace: cluster.Namespace}, kccCluster); err != nil {
 		if apierrors.IsNotFound(err) {
-			return false, nil
+			return nil, false, nil
 		}
-		return false, err
+		return nil, false, err
 	}
 	if kccCluster.Status.Initialization == nil || kccCluster.Status.Initialization.Provisioned == nil {
-		return false, nil
+		return kccCluster, false, nil
 	}
-	return *kccCluster.Status.Initialization.Provisioned, nil
+	return kccCluster, *kccCluster.Status.Initialization.Provisioned, nil
 }
 
 // extractClusterEndpoint returns the GKE cluster endpoint from ContainerCluster status.
