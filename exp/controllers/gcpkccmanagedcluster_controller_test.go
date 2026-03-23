@@ -20,18 +20,18 @@ import (
 	"context"
 	"testing"
 
+	kcccomputev1beta1 "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/clients/generated/apis/compute/v1beta1"
+	kcck8sv1alpha1 "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/clients/generated/apis/k8s/v1alpha1"
 	. "github.com/onsi/gomega"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	k8sruntime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-gcp/feature"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -39,6 +39,7 @@ func newKCCClusterScheme(g *WithT) *k8sruntime.Scheme {
 	s := k8sruntime.NewScheme()
 	g.Expect(infrav1exp.AddToScheme(s)).To(Succeed())
 	g.Expect(clusterv1.AddToScheme(s)).To(Succeed())
+	g.Expect(kcccomputev1beta1.AddToScheme(s)).To(Succeed())
 	return s
 }
 
@@ -71,8 +72,17 @@ func newTestKCCCluster(name, ns string, ownerCluster *clusterv1.Cluster) *infrav
 			},
 		},
 		Spec: infrav1exp.GCPKCCManagedClusterSpec{
-			Network:    mustMarshalRaw(map[string]interface{}{"metadata": map[string]interface{}{"name": "my-network"}}),
-			Subnetwork: mustMarshalRaw(map[string]interface{}{"metadata": map[string]interface{}{"name": "my-subnet"}}),
+			Network: kcccomputev1beta1.ComputeNetwork{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-network"},
+			},
+			Subnetwork: kcccomputev1beta1.ComputeSubnetwork{
+				ObjectMeta: metav1.ObjectMeta{Name: "my-subnet"},
+				Spec: kcccomputev1beta1.ComputeSubnetworkSpec{
+					IpCidrRange: "10.0.0.0/24",
+					Region:      "us-central1",
+					NetworkRef:  kcck8sv1alpha1.ResourceRef{Name: "my-network"},
+				},
+			},
 		},
 	}
 	return kccCluster
@@ -145,8 +155,17 @@ func TestGCPKCCManagedClusterReconciler_NoOwnerCluster(t *testing.T) {
 	kccCluster := &infrav1exp.GCPKCCManagedCluster{
 		ObjectMeta: metav1.ObjectMeta{Name: "orphan", Namespace: "default"},
 		Spec: infrav1exp.GCPKCCManagedClusterSpec{
-			Network:    mustMarshalRaw(map[string]interface{}{"metadata": map[string]interface{}{"name": "net"}}),
-			Subnetwork: mustMarshalRaw(map[string]interface{}{"metadata": map[string]interface{}{"name": "sub"}}),
+			Network: kcccomputev1beta1.ComputeNetwork{
+				ObjectMeta: metav1.ObjectMeta{Name: "net"},
+			},
+			Subnetwork: kcccomputev1beta1.ComputeSubnetwork{
+				ObjectMeta: metav1.ObjectMeta{Name: "sub"},
+				Spec: kcccomputev1beta1.ComputeSubnetworkSpec{
+					IpCidrRange: "10.0.0.0/24",
+					Region:      "us-central1",
+					NetworkRef:  kcck8sv1alpha1.ResourceRef{Name: "net"},
+				},
+			},
 		},
 	}
 
@@ -186,13 +205,11 @@ func TestGCPKCCManagedClusterReconciler_NormalReconcile(t *testing.T) {
 	g.Expect(updated.Finalizers).To(ContainElement(infrav1exp.KCCClusterFinalizer))
 
 	// ComputeNetwork should have been created.
-	network := &unstructured.Unstructured{}
-	network.SetGroupVersionKind(computeNetworkGVK)
+	network := &kcccomputev1beta1.ComputeNetwork{}
 	g.Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "my-network", Namespace: kccCluster.Namespace}, network)).To(Succeed())
 
 	// ComputeSubnetwork should have been created.
-	subnet := &unstructured.Unstructured{}
-	subnet.SetGroupVersionKind(computeSubnetworkGVK)
+	subnet := &kcccomputev1beta1.ComputeSubnetwork{}
 	g.Expect(fakeClient.Get(ctx, types.NamespacedName{Name: "my-subnet", Namespace: kccCluster.Namespace}, subnet)).To(Succeed())
 
 	// Status should not yet be ready (KCC resources have no Ready condition).
@@ -214,22 +231,30 @@ func TestGCPKCCManagedClusterReconciler_ReadyOnceKCCResourcesReady(t *testing.T)
 	cluster := newTestCluster("my-cluster", "default")
 	kccCluster := newTestKCCCluster("my-infra", "default", cluster)
 
-	// Pre-create KCC resources with Ready=True already set in the object.
-	network := kccResourceWithReadyCondition(computeNetworkGVK, "my-network", "default")
-	subnet := kccResourceWithReadyCondition(computeSubnetworkGVK, "my-subnet", "default")
+	readyConditions := []kcck8sv1alpha1.Condition{
+		{Type: kcck8sv1alpha1.ReadyConditionType, Status: corev1.ConditionTrue},
+	}
+
+	// Pre-create KCC resources with Ready=True.
+	network := &kcccomputev1beta1.ComputeNetwork{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-network", Namespace: "default"},
+		Status:     kcccomputev1beta1.ComputeNetworkStatus{Conditions: readyConditions},
+	}
+	subnet := &kcccomputev1beta1.ComputeSubnetwork{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-subnet", Namespace: "default"},
+		Spec: kcccomputev1beta1.ComputeSubnetworkSpec{
+			IpCidrRange: "10.0.0.0/24",
+			Region:      "us-central1",
+			NetworkRef:  kcck8sv1alpha1.ResourceRef{Name: "my-network"},
+		},
+		Status: kcccomputev1beta1.ComputeSubnetworkStatus{Conditions: readyConditions},
+	}
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(s).
-		WithObjects(cluster, kccCluster).
+		WithObjects(cluster, kccCluster, network, subnet).
 		WithStatusSubresource(kccCluster).
 		Build()
-
-	// Create KCC resources — status is embedded in the object directly (no subresource).
-	g.Expect(fakeClient.Create(ctx, network)).To(Succeed())
-	g.Expect(fakeClient.Create(ctx, subnet)).To(Succeed())
-	// Update with Ready=True status directly on the objects.
-	g.Expect(setUnstructuredReadyStatus(ctx, fakeClient, network)).To(Succeed())
-	g.Expect(setUnstructuredReadyStatus(ctx, fakeClient, subnet)).To(Succeed())
 
 	r := &GCPKCCManagedClusterReconciler{Client: fakeClient}
 	result, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: kccCluster.Name, Namespace: kccCluster.Namespace}})
@@ -271,7 +296,9 @@ func TestGCPKCCManagedClusterReconciler_DeleteWaitsForKCCResources(t *testing.T)
 	g.Expect(fakeClient.Delete(ctx, kccCluster)).To(Succeed())
 
 	// Pre-create a ComputeNetwork that still exists (not yet deleted by KCC).
-	network := kccResourceWithReadyCondition(computeNetworkGVK, "my-network", "default")
+	network := &kcccomputev1beta1.ComputeNetwork{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-network", Namespace: "default"},
+	}
 	g.Expect(fakeClient.Create(ctx, network)).To(Succeed())
 
 	r := &GCPKCCManagedClusterReconciler{Client: fakeClient}
@@ -322,25 +349,4 @@ func TestGCPKCCManagedClusterReconciler_DeleteRemovesFinalizer(t *testing.T) {
 	if err == nil {
 		g.Expect(updated.Finalizers).NotTo(ContainElement(infrav1exp.KCCClusterFinalizer))
 	}
-}
-
-// --- test helpers ---
-
-// kccResourceWithReadyCondition creates an unstructured KCC resource with a Ready=True condition.
-func kccResourceWithReadyCondition(gvk schema.GroupVersionKind, name, ns string) *unstructured.Unstructured {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(gvk)
-	obj.SetName(name)
-	obj.SetNamespace(ns)
-	return obj
-}
-
-// setUnstructuredReadyStatus sets Ready=True on an unstructured object using a direct Update.
-// The fake client does not enforce status-subresource isolation for unstructured types.
-func setUnstructuredReadyStatus(ctx context.Context, c client.Client, obj *unstructured.Unstructured) error {
-	updated := obj.DeepCopy()
-	if err := unstructured.SetNestedSlice(updated.Object, []interface{}{kccCondition("Ready", "True")}, "status", "conditions"); err != nil {
-		return err
-	}
-	return c.Update(ctx, updated)
 }

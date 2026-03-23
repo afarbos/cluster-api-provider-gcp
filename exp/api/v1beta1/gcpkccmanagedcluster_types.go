@@ -17,8 +17,8 @@ limitations under the License.
 package v1beta1
 
 import (
+	kcccomputev1beta1 "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/clients/generated/apis/compute/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 )
 
@@ -36,39 +36,16 @@ const (
 // Each Config Connector resource must include the "cnrm.cloud.google.com/project-id"
 // annotation to indicate which GCP project to use.
 type GCPKCCManagedClusterSpec struct {
-	// Network is a complete Config Connector ComputeNetwork resource spec.
+	// Network is a complete Config Connector ComputeNetwork resource.
 	// CAPG creates this resource and manages its lifecycle via owner references.
-	//
-	// Example:
-	//   apiVersion: compute.cnrm.cloud.google.com/v1beta1
-	//   kind: ComputeNetwork
-	//   metadata:
-	//     name: my-network
-	//     annotations:
-	//       cnrm.cloud.google.com/project-id: "my-gcp-project"
-	//   spec:
-	//     autoCreateSubnetworks: false
-	//     routingMode: REGIONAL
-	//
 	// +required
-	// +kubebuilder:validation:XEmbeddedResource
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Network runtime.RawExtension `json:"network"`
+	Network kcccomputev1beta1.ComputeNetwork `json:"network"`
 
-	// Subnetwork is a complete Config Connector ComputeSubnetwork resource spec.
+	// Subnetwork is a complete Config Connector ComputeSubnetwork resource.
 	// CAPG creates this resource and patches the secondaryIpRange field from
 	// Cluster.Spec.ClusterNetwork (pods and services CIDRs).
-	//
-	// Patched fields:
-	//   - spec.secondaryIpRange[pods].ipCidrRange  ← Cluster.Spec.ClusterNetwork.Pods.CIDRBlocks[0]
-	//   - spec.secondaryIpRange[services].ipCidrRange ← Cluster.Spec.ClusterNetwork.Services.CIDRBlocks[0]
-	//
-	// All other fields remain as user-specified.
-	//
 	// +required
-	// +kubebuilder:validation:XEmbeddedResource
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Subnetwork runtime.RawExtension `json:"subnetwork"`
+	Subnetwork kcccomputev1beta1.ComputeSubnetwork `json:"subnetwork"`
 
 	// ControlPlaneEndpoint represents the endpoint used to communicate with the control plane.
 	// Populated by the GCPKCCManagedControlPlane controller once the GKE cluster endpoint is available.

@@ -347,7 +347,7 @@ generate-manifests: $(CONTROLLER_GEN) ## Generate manifests e.g. CRD, RBAC etc.
 		paths=./api/... \
 		paths=./$(EXP_DIR)/api/... \
 		paths=./$(EXP_DIR)/bootstrap/gke/api/... \
-		crd:crdVersions=v1 \
+		crd:crdVersions=v1,allowDangerousTypes=true \
 		rbac:roleName=manager-role \
 		output:crd:dir=$(CRD_ROOT) \
 		output:webhook:dir=$(WEBHOOK_ROOT) \

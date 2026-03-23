@@ -4,9 +4,10 @@ Branch: af/featkcc | Updated: 2026-03-23
 See docs/proposals/config-connector-integration.md for full design.
 
 ## Implementation approach
-- API types: `runtime.RawExtension` per named field, no KCC Go imports
-- Controllers: parse `runtime.RawExtension` → `*unstructured.Unstructured`, patch with `unstructured.SetNestedField()`
-- No KCC Go module dependency — only KCC CRDs needed at runtime
+- API types: KCC Go types per named field (`kcccomputev1beta1.ComputeNetwork`, `kcccontainerv1beta1.ContainerCluster`, etc.)
+- Controllers: direct typed field access on KCC structs (no unstructured parsing)
+- KCC Go dependency: `github.com/GoogleCloudPlatform/k8s-config-connector` — only the generated API type packages (`pkg/clients/generated/apis/`), which import standard k8s types only (no GCP client libraries)
+- Full CRD schema for all KCC fields → ClusterClass patches are validated, `kubectl explain` works
 
 ## Phase 1: Revise API Types ✅ DONE
 

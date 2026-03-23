@@ -22,18 +22,18 @@ import (
 	"fmt"
 	"time"
 
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	kcccontainerv1beta1 "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/clients/generated/apis/container/v1beta1"
+	kcck8sv1alpha1 "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/clients/generated/apis/k8s/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	clientcmdlatest "k8s.io/client-go/tools/clientcmd/api/latest"
-	"sigs.k8s.io/cluster-api-provider-gcp/feature"
 	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
+	"sigs.k8s.io/cluster-api-provider-gcp/feature"
 	"sigs.k8s.io/cluster-api-provider-gcp/util/reconciler"
 	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -47,10 +47,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-)
-
-var (
-	containerClusterGVK = schema.GroupVersionKind{Group: "container.cnrm.cloud.google.com", Version: "v1beta1", Kind: "ContainerCluster"}
 )
 
 // GCPKCCManagedControlPlaneReconciler reconciles a GCPKCCManagedControlPlane object.
@@ -184,7 +180,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 	}
 
 	// Check if ContainerCluster is ready.
-	if !isKCCResourceReady(containerCluster) {
+	if !isKCCConditionTrue(containerCluster.Status.Conditions, kcck8sv1alpha1.ReadyConditionType) {
 		log.Info("ContainerCluster not yet ready, requeuing")
 		apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{
 			Type:               "Available",
@@ -256,26 +252,21 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileDelete(ctx context.Contex
 }
 
 // reconcileContainerCluster creates or retrieves the ContainerCluster KCC resource.
-func (r *GCPKCCManagedControlPlaneReconciler) reconcileContainerCluster(ctx context.Context, _ *clusterv1.Cluster, kccCP *infrav1exp.GCPKCCManagedControlPlane) (*unstructured.Unstructured, error) {
-	desired, err := rawExtensionToUnstructured(kccCP.Spec.Cluster)
-	if err != nil {
-		return nil, fmt.Errorf("parsing cluster spec: %w", err)
-	}
-	desired.SetGroupVersionKind(containerClusterGVK)
-	desired.SetNamespace(kccCP.Namespace)
-	setKCCOwnerReference(desired, kccCP, "GCPKCCManagedControlPlane")
+func (r *GCPKCCManagedControlPlaneReconciler) reconcileContainerCluster(ctx context.Context, _ *clusterv1.Cluster, kccCP *infrav1exp.GCPKCCManagedControlPlane) (*kcccontainerv1beta1.ContainerCluster, error) {
+	desired := kccCP.Spec.Cluster.DeepCopy()
+	desired.Namespace = kccCP.Namespace
+	setOwnerRef(&desired.ObjectMeta, kccCP, "GCPKCCManagedControlPlane")
 
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(containerClusterGVK)
-	err = r.Get(ctx, types.NamespacedName{Name: desired.GetName(), Namespace: desired.GetNamespace()}, existing)
+	existing := &kcccontainerv1beta1.ContainerCluster{}
+	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
 	if apierrors.IsNotFound(err) {
 		if createErr := r.Create(ctx, desired); createErr != nil {
-			return nil, fmt.Errorf("creating ContainerCluster %s: %w", desired.GetName(), createErr)
+			return nil, fmt.Errorf("creating ContainerCluster %s: %w", desired.Name, createErr)
 		}
 		return desired, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("getting ContainerCluster %s: %w", desired.GetName(), err)
+		return nil, fmt.Errorf("getting ContainerCluster %s: %w", desired.Name, err)
 	}
 	return existing, nil
 }
@@ -283,11 +274,16 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileContainerCluster(ctx cont
 // reconcileKubeconfig generates or updates the kubeconfig secret for the workload cluster.
 // Secret name: <cluster>-kubeconfig, type: cluster.x-k8s.io/secret,
 // label: cluster.x-k8s.io/cluster-name=<cluster>, key: value
-func (r *GCPKCCManagedControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, cluster *clusterv1.Cluster, kccCP *infrav1exp.GCPKCCManagedControlPlane, containerCluster *unstructured.Unstructured) error {
+func (r *GCPKCCManagedControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, cluster *clusterv1.Cluster, kccCP *infrav1exp.GCPKCCManagedControlPlane, containerCluster *kcccontainerv1beta1.ContainerCluster) error {
 	log := log.FromContext(ctx)
 
-	// Extract CA cert from ContainerCluster status.masterAuth.clusterCaCertificate (base64-encoded PEM).
-	caCertB64, _, _ := unstructured.NestedString(containerCluster.Object, "status", "masterAuth", "clusterCaCertificate")
+	// Extract CA cert from ContainerCluster status.observedState.masterAuth.clusterCaCertificate (base64-encoded PEM).
+	var caCertB64 string
+	if containerCluster.Status.ObservedState != nil &&
+		containerCluster.Status.ObservedState.MasterAuth != nil &&
+		containerCluster.Status.ObservedState.MasterAuth.ClusterCaCertificate != nil {
+		caCertB64 = *containerCluster.Status.ObservedState.MasterAuth.ClusterCaCertificate
+	}
 	if caCertB64 == "" {
 		log.Info("ContainerCluster CA cert not yet available, skipping kubeconfig generation")
 		return nil
@@ -372,25 +368,17 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileKubeconfig(ctx context.Co
 
 // deleteContainerCluster deletes the ContainerCluster and returns true when it is gone.
 func (r *GCPKCCManagedControlPlaneReconciler) deleteContainerCluster(ctx context.Context, kccCP *infrav1exp.GCPKCCManagedControlPlane) (bool, error) {
-	obj, err := rawExtensionToUnstructured(kccCP.Spec.Cluster)
-	if err != nil {
-		return false, err
-	}
-	obj.SetGroupVersionKind(containerClusterGVK)
-	obj.SetNamespace(kccCP.Namespace)
-
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(containerClusterGVK)
-	err = r.Get(ctx, types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}, existing)
+	existing := &kcccontainerv1beta1.ContainerCluster{}
+	err := r.Get(ctx, types.NamespacedName{Name: kccCP.Spec.Cluster.Name, Namespace: kccCP.Namespace}, existing)
 	if apierrors.IsNotFound(err) {
 		return true, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	if existing.GetDeletionTimestamp().IsZero() {
+	if existing.DeletionTimestamp.IsZero() {
 		if err := r.Delete(ctx, existing); err != nil && !apierrors.IsNotFound(err) {
-			return false, fmt.Errorf("deleting ContainerCluster %s: %w", existing.GetName(), err)
+			return false, fmt.Errorf("deleting ContainerCluster %s: %w", existing.Name, err)
 		}
 	}
 	return false, nil
@@ -416,15 +404,11 @@ func (r *GCPKCCManagedControlPlaneReconciler) isInfraClusterProvisioned(ctx cont
 }
 
 // extractClusterEndpoint returns the GKE cluster endpoint from ContainerCluster status.
-func extractClusterEndpoint(containerCluster *unstructured.Unstructured) (string, error) {
-	endpoint, found, err := unstructured.NestedString(containerCluster.Object, "status", "endpoint")
-	if err != nil {
-		return "", fmt.Errorf("reading endpoint from ContainerCluster status: %w", err)
-	}
-	if !found || endpoint == "" {
+func extractClusterEndpoint(containerCluster *kcccontainerv1beta1.ContainerCluster) (string, error) {
+	if containerCluster.Status.Endpoint == nil || *containerCluster.Status.Endpoint == "" {
 		return "", fmt.Errorf("ContainerCluster endpoint not yet available")
 	}
-	return endpoint, nil
+	return *containerCluster.Status.Endpoint, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
@@ -432,7 +416,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) SetupWithManager(ctx context.Conte
 	log := ctrl.LoggerFrom(ctx)
 
 	// Verify that KCC CRDs are present.
-	if err := verifyKCCCRDs(ctx, mgr.GetClient(), containerClusterGVK); err != nil {
+	if err := verifyKCCCRDs(ctx, mgr.GetClient(), kcccontainerv1beta1.ContainerClusterGVK); err != nil {
 		return fmt.Errorf("KCC CRDs not found — install Config Connector before enabling the ConfigConnector feature gate: %w", err)
 	}
 

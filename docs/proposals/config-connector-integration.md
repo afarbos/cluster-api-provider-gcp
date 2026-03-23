@@ -41,10 +41,11 @@ This design is inspired by the [CAPZ Azure Service Operator integration](https:/
 
 | Aspect | CAPZ/ASO | This design |
 |--------|----------|-------------|
-| Resource embedding | `[]runtime.RawExtension` (generic list) | Named typed fields (`spec.network`, `spec.cluster`, etc.) |
+| Resource embedding | `[]runtime.RawExtension` (generic list) | Named typed fields (`spec.network`, `spec.cluster`, etc.) using KCC Go types |
 | Resource identity | Users list any resources in any order | Each field has a defined role — network, subnetwork, cluster, node pool |
-| CAPI field patching | JSON merge patches via mutator pipeline | `unstructured.SetNestedField()` on `*unstructured.Unstructured` |
-| KCC Go dependency | Full ASO Go types imported | None — controllers use `*unstructured.Unstructured`; only KCC CRDs needed at runtime |
+| CAPI field patching | JSON merge patches via mutator pipeline | Direct typed field access on KCC structs |
+| KCC Go dependency | Full ASO Go types imported | KCC generated API types only (`pkg/clients/generated/apis/`); lightweight — no GCP client libs |
+| ClusterClass compatibility | Full schema in CRD | Full schema in CRD — ClusterClass patches are validated against KCC type schemas |
 | Dependency tracking | Shared `ResourceReconciler` helper | Per-controller sequential reconciliation |
 
 ### Architecture
@@ -78,9 +79,9 @@ Management Cluster
 ### Key Principles
 
 1. **Named typed fields** for each resource role (`network`, `subnetwork`, `cluster`, `nodePool`) rather than a generic list
-2. **`runtime.RawExtension`** per named field — each field holds a complete Config Connector resource spec (the user controls all fields that CAPG doesn't patch)
-3. **No KCC Go dependency** — controllers parse `runtime.RawExtension` into `*unstructured.Unstructured` and use `unstructured.SetNestedField()` for CAPI-derived patches; only KCC CRDs are needed at runtime, not the KCC Go module
-4. **CAPI field minimization** — only fields that CAPG must patch for CAPI compatibility are enforced; everything else is user-controlled
+2. **KCC Go types** per named field — each field uses the concrete KCC generated type (e.g. `kcccontainerv1beta1.ContainerCluster`), giving full CRD schema, ClusterClass patch validation, and `kubectl explain` support
+3. **Lightweight KCC dependency** — imports only `pkg/clients/generated/apis/{compute,container}/v1beta1` which are pure type definitions; no GCP client libraries are pulled in (the heavy deps like BigQuery, Spanner etc. are only in KCC's controller packages, not the API types)
+4. **CAPI field minimization** — only fields that CAPG must patch for CAPI compatibility are enforced; everything else is user-controlled via the full KCC type schema
 5. **CAPI v1beta2 contract compliance** — all required spec/status fields, conditions, and labels as per the current contract spec
 
 ### GCPKCCManagedCluster (InfraCluster)
@@ -89,21 +90,15 @@ Implements the [InfraCluster contract](https://cluster-api.sigs.k8s.io/developer
 
 ```go
 type GCPKCCManagedClusterSpec struct {
-    // Network is the Config Connector ComputeNetwork resource spec.
-    // User provides the complete resource specification including
-    // the "cnrm.cloud.google.com/project-id" annotation.
+    // Network is a complete Config Connector ComputeNetwork resource.
     // CAPG creates and manages the lifecycle of this resource.
     // +required
-    // +kubebuilder:validation:XEmbeddedResource
-    // +kubebuilder:pruning:PreserveUnknownFields
-    Network runtime.RawExtension `json:"network"`
+    Network kcccomputev1beta1.ComputeNetwork `json:"network"`
 
-    // Subnetwork is the Config Connector ComputeSubnetwork resource spec.
+    // Subnetwork is a complete Config Connector ComputeSubnetwork resource.
     // CAPG patches spec.secondaryIpRange from Cluster.Spec.ClusterNetwork.
     // +required
-    // +kubebuilder:validation:XEmbeddedResource
-    // +kubebuilder:pruning:PreserveUnknownFields
-    Subnetwork runtime.RawExtension `json:"subnetwork"`
+    Subnetwork kcccomputev1beta1.ComputeSubnetwork `json:"subnetwork"`
 
     // ControlPlaneEndpoint is the endpoint used to communicate with the control plane.
     // Populated by the ControlPlane provider once the GKE cluster endpoint is available.
@@ -165,21 +160,14 @@ Implements the [ControlPlane contract](https://cluster-api.sigs.k8s.io/developer
 
 ```go
 type GCPKCCManagedControlPlaneSpec struct {
-    // Cluster is the Config Connector ContainerCluster resource spec.
-    // User provides the complete resource specification including
-    // the "cnrm.cloud.google.com/project-id" annotation.
-    // CAPG patches spec.minMasterVersion from spec.Version (CAPI field).
-    // CAPG sets spec.networkRef and spec.subnetworkRef from the sibling GCPKCCManagedCluster.
+    // Cluster is a complete Config Connector ContainerCluster resource.
+    // CAPG creates this resource and manages its lifecycle.
     // +required
-    // +kubebuilder:validation:XEmbeddedResource
-    // +kubebuilder:pruning:PreserveUnknownFields
-    Cluster runtime.RawExtension `json:"cluster"`
+    Cluster kcccontainerv1beta1.ContainerCluster `json:"cluster"`
 
     // Version is the Kubernetes version for the control plane.
-    // Required by the ControlPlane v1beta2 contract.
-    // CAPG patches this into ContainerCluster.spec.minMasterVersion.
     // +optional
-    Version string `json:"version,omitempty"`
+    Version *string `json:"version,omitempty"`
 
     // ControlPlaneEndpoint represents the API server endpoint.
     // Populated when the ContainerCluster becomes available.
@@ -255,17 +243,10 @@ Implements the [InfraMachinePool contract](https://cluster-api.sigs.k8s.io/devel
 
 ```go
 type GCPKCCMachinePoolSpec struct {
-    // NodePool is the Config Connector ContainerNodePool resource spec.
-    // User provides the complete resource specification including
-    // the "cnrm.cloud.google.com/project-id" annotation.
-    // CAPG patches: spec.nodeCount (from MachinePool.spec.replicas),
-    //               spec.version (from MachinePool.spec.template.spec.version),
-    //               spec.clusterRef (from sibling GCPKCCManagedControlPlane),
-    //               spec.nodeLocations (from MachinePool.spec.failureDomains).
+    // NodePool is a complete Config Connector ContainerNodePool resource.
+    // CAPG creates this resource and manages its lifecycle.
     // +required
-    // +kubebuilder:validation:XEmbeddedResource
-    // +kubebuilder:pruning:PreserveUnknownFields
-    NodePool runtime.RawExtension `json:"nodePool"`
+    NodePool kcccontainerv1beta1.ContainerNodePool `json:"nodePool"`
 
     // ProviderIDList contains GCE instance provider IDs for nodes in this pool.
     // Format: gce://<project>/<zone>/<instance>
@@ -648,17 +629,27 @@ type Spec struct {
 **Cons**: No type safety; CAPG can't know which resource is the network vs the cluster; harder to document and validate; harder to enforce patching rules
 **Decision**: Rejected in favor of named typed fields.
 
-### Alternative 2: Fully Typed KCC Structs (embed `kcccontainerv1beta1.ContainerCluster`)
+### Alternative 2: `runtime.RawExtension` per Named Field (original design)
+```go
+type Spec struct {
+    Cluster runtime.RawExtension `json:"cluster"` // +kubebuilder:validation:XEmbeddedResource
+}
+```
+**Pros**: No KCC Go dependency; zero version coupling; maximum forward compatibility
+**Cons**: CRD schema is opaque — ClusterClass variable patches have no schema validation; `kubectl explain` shows nothing; users get no admission-time validation on the embedded resource structure
+**Decision**: Rejected. Analysis showed that KCC's generated API type packages (`pkg/clients/generated/apis/`) import only standard k8s types (no GCP client libraries), so the dependency footprint is lightweight. The ClusterClass usability gain outweighs the version coupling concern.
+
+### Alternative 3 (adopted): KCC Go Types per Named Field
 ```go
 type Spec struct {
     Cluster kcccontainerv1beta1.ContainerCluster `json:"cluster"`
 }
 ```
-**Pros**: Full schema validation at admission time
-**Cons**: Tightly couples CAPG API version to KCC API version; bumping KCC API version requires a CAPG API version bump; breaks when KCC adds/removes fields
-**Decision**: Rejected. `runtime.RawExtension` per named field gives named-field ergonomics without version lock-in.
+**Pros**: Full CRD schema generated by controller-gen → ClusterClass patches validated → `kubectl explain` works; typed controller code (no `unstructured.NestedString`); compile-time safety
+**Cons**: CAPG's KCC type version is pinned to the KCC module version in go.mod; new KCC fields require a CAPG dependency bump. However, since the KCC go-client is auto-generated and marked ALPHA, this is an acceptable tradeoff for alpha.
+**Decision**: Adopted.
 
-### Alternative 3: Reference-Only Pattern
+### Alternative 4: Reference-Only Pattern
 ```go
 type Spec struct {
     NetworkRef *ObjectReference    `json:"networkRef"`

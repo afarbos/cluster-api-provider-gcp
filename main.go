@@ -28,6 +28,8 @@ import (
 
 	// +kubebuilder:scaffold:imports
 
+	kcccomputev1beta1 "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/clients/generated/apis/compute/v1beta1"
+	kcccontainerv1beta1 "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/clients/generated/apis/container/v1beta1"
 	"github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -70,6 +72,8 @@ func init() {
 	_ = clusterv1.AddToScheme(scheme)
 	_ = infrav1exp.AddToScheme(scheme)
 	_ = gkebootstrapv1exp.AddToScheme(scheme)
+	_ = kcccomputev1beta1.AddToScheme(scheme)
+	_ = kcccontainerv1beta1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 

@@ -17,8 +17,8 @@ limitations under the License.
 package v1beta1
 
 import (
+	kcccontainerv1beta1 "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/clients/generated/apis/container/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 )
 
@@ -36,24 +36,10 @@ const (
 // The Config Connector resource must include the "cnrm.cloud.google.com/project-id"
 // annotation to indicate which GCP project to use.
 type GCPKCCManagedControlPlaneSpec struct {
-	// Cluster is a complete Config Connector ContainerCluster resource spec.
+	// Cluster is a complete Config Connector ContainerCluster resource.
 	// CAPG creates this resource and manages its lifecycle via owner references.
-	//
-	// Example:
-	//   apiVersion: container.cnrm.cloud.google.com/v1beta1
-	//   kind: ContainerCluster
-	//   metadata:
-	//     name: my-cluster
-	//     annotations:
-	//       cnrm.cloud.google.com/project-id: "my-gcp-project"
-	//   spec:
-	//     location: us-central1
-	//     initialNodeCount: 1
-	//
 	// +required
-	// +kubebuilder:validation:XEmbeddedResource
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Cluster runtime.RawExtension `json:"cluster"`
+	Cluster kcccontainerv1beta1.ContainerCluster `json:"cluster"`
 
 	// Version is the Kubernetes version of the GKE cluster (e.g., "1.29").
 	// This is informational; the actual version is set in the ContainerCluster spec.

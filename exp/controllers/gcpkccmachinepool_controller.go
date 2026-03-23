@@ -21,16 +21,16 @@ import (
 	"fmt"
 	"time"
 
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	kcccontainerv1beta1 "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/clients/generated/apis/container/v1beta1"
+	kcck8sv1alpha1 "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/clients/generated/apis/k8s/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/clientcmd"
-	"sigs.k8s.io/cluster-api-provider-gcp/feature"
 	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
+	"sigs.k8s.io/cluster-api-provider-gcp/feature"
 	"sigs.k8s.io/cluster-api-provider-gcp/util/reconciler"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
@@ -43,10 +43,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-)
-
-var (
-	containerNodePoolGVK = schema.GroupVersionKind{Group: "container.cnrm.cloud.google.com", Version: "v1beta1", Kind: "ContainerNodePool"}
 )
 
 // GCPKCCMachinePoolReconciler reconciles a GCPKCCMachinePool object.
@@ -170,7 +166,7 @@ func (r *GCPKCCMachinePoolReconciler) reconcileNormal(ctx context.Context, clust
 	}
 
 	// Check if ContainerNodePool is ready.
-	if !isKCCResourceReady(nodePool) {
+	if !isKCCConditionTrue(nodePool.Status.Conditions, kcck8sv1alpha1.ReadyConditionType) {
 		log.Info("ContainerNodePool not yet ready, requeuing")
 		apimeta.SetStatusCondition(&kccMP.Status.Conditions, metav1.Condition{
 			Type:               "Ready",
@@ -234,26 +230,21 @@ func (r *GCPKCCMachinePoolReconciler) reconcileDelete(ctx context.Context, _ *cl
 }
 
 // reconcileNodePool creates or retrieves the ContainerNodePool KCC resource.
-func (r *GCPKCCMachinePoolReconciler) reconcileNodePool(ctx context.Context, _ *clusterv1.Cluster, kccMP *infrav1exp.GCPKCCMachinePool) (*unstructured.Unstructured, error) {
-	desired, err := rawExtensionToUnstructured(kccMP.Spec.NodePool)
-	if err != nil {
-		return nil, fmt.Errorf("parsing nodePool spec: %w", err)
-	}
-	desired.SetGroupVersionKind(containerNodePoolGVK)
-	desired.SetNamespace(kccMP.Namespace)
-	setKCCOwnerReference(desired, kccMP, "GCPKCCMachinePool")
+func (r *GCPKCCMachinePoolReconciler) reconcileNodePool(ctx context.Context, _ *clusterv1.Cluster, kccMP *infrav1exp.GCPKCCMachinePool) (*kcccontainerv1beta1.ContainerNodePool, error) {
+	desired := kccMP.Spec.NodePool.DeepCopy()
+	desired.Namespace = kccMP.Namespace
+	setOwnerRef(&desired.ObjectMeta, kccMP, "GCPKCCMachinePool")
 
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(containerNodePoolGVK)
-	err = r.Get(ctx, types.NamespacedName{Name: desired.GetName(), Namespace: desired.GetNamespace()}, existing)
+	existing := &kcccontainerv1beta1.ContainerNodePool{}
+	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
 	if apierrors.IsNotFound(err) {
 		if createErr := r.Create(ctx, desired); createErr != nil {
-			return nil, fmt.Errorf("creating ContainerNodePool %s: %w", desired.GetName(), createErr)
+			return nil, fmt.Errorf("creating ContainerNodePool %s: %w", desired.Name, createErr)
 		}
 		return desired, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("getting ContainerNodePool %s: %w", desired.GetName(), err)
+		return nil, fmt.Errorf("getting ContainerNodePool %s: %w", desired.Name, err)
 	}
 	return existing, nil
 }
@@ -303,25 +294,17 @@ func (r *GCPKCCMachinePoolReconciler) reconcileProviderIDList(ctx context.Contex
 
 // deleteNodePool deletes the ContainerNodePool and returns true when it is gone.
 func (r *GCPKCCMachinePoolReconciler) deleteNodePool(ctx context.Context, kccMP *infrav1exp.GCPKCCMachinePool) (bool, error) {
-	obj, err := rawExtensionToUnstructured(kccMP.Spec.NodePool)
-	if err != nil {
-		return false, err
-	}
-	obj.SetGroupVersionKind(containerNodePoolGVK)
-	obj.SetNamespace(kccMP.Namespace)
-
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(containerNodePoolGVK)
-	err = r.Get(ctx, types.NamespacedName{Name: obj.GetName(), Namespace: obj.GetNamespace()}, existing)
+	existing := &kcccontainerv1beta1.ContainerNodePool{}
+	err := r.Get(ctx, types.NamespacedName{Name: kccMP.Spec.NodePool.Name, Namespace: kccMP.Namespace}, existing)
 	if apierrors.IsNotFound(err) {
 		return true, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	if existing.GetDeletionTimestamp().IsZero() {
+	if existing.DeletionTimestamp.IsZero() {
 		if err := r.Delete(ctx, existing); err != nil && !apierrors.IsNotFound(err) {
-			return false, fmt.Errorf("deleting ContainerNodePool %s: %w", existing.GetName(), err)
+			return false, fmt.Errorf("deleting ContainerNodePool %s: %w", existing.Name, err)
 		}
 	}
 	return false, nil
@@ -351,7 +334,7 @@ func (r *GCPKCCMachinePoolReconciler) SetupWithManager(ctx context.Context, mgr 
 	log := ctrl.LoggerFrom(ctx)
 
 	// Verify that KCC CRDs are present.
-	if err := verifyKCCCRDs(ctx, mgr.GetClient(), containerNodePoolGVK); err != nil {
+	if err := verifyKCCCRDs(ctx, mgr.GetClient(), kcccontainerv1beta1.ContainerNodePoolGVK); err != nil {
 		return fmt.Errorf("KCC CRDs not found — install Config Connector before enabling the ConfigConnector feature gate: %w", err)
 	}
 
