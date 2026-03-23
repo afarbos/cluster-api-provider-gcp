@@ -320,18 +320,72 @@ Each resource type has a corresponding template type for ClusterClass compatibil
 
 Templates use SSA dry-run compatible webhooks (controller-runtime `CustomValidator`) per the CAPI ClusterClass contract.
 
-### CAPI Field Mapping
+### Defaults and Overrides
 
-| CAPI Field | Config Connector Field | Resource |
-|------------|------------------------|----------|
-| `Cluster.Spec.ClusterNetwork.Pods.CIDRBlocks[0]` | `spec.secondaryIpRange[pods].ipCidrRange` | ComputeSubnetwork |
-| `Cluster.Spec.ClusterNetwork.Services.CIDRBlocks[0]` | `spec.secondaryIpRange[services].ipCidrRange` | ComputeSubnetwork |
-| `GCPKCCManagedControlPlane.Spec.Version` | `spec.minMasterVersion` | ContainerCluster |
-| `MachinePool.Spec.Replicas` | `spec.nodeCount` (when autoscaling disabled) | ContainerNodePool |
-| `MachinePool.Spec.Template.Spec.Version` | `spec.version` | ContainerNodePool |
-| `MachinePool.Spec.FailureDomains` | `spec.nodeLocations` | ContainerNodePool |
-| *(from GCPKCCManagedCluster.status)* | `spec.networkRef`, `spec.subnetworkRef` | ContainerCluster |
-| *(from GCPKCCManagedControlPlane.status)* | `spec.clusterRef` | ContainerNodePool |
+Controllers apply two categories of field patching at reconcile time (after `DeepCopy()`, before `Create()`):
+
+**Defaults** are applied only when the field is empty/nil. User-provided values always win.
+
+| Source | Destination | Resource |
+|--------|-------------|----------|
+| `{kccCluster.Name}` | `metadata.name` | ComputeNetwork |
+| `false` | `spec.autoCreateSubnetworks` | ComputeNetwork |
+| `"REGIONAL"` | `spec.routingMode` | ComputeNetwork |
+| `{kccCluster.Name}` | `metadata.name` | ComputeSubnetwork |
+| resolved network name | `spec.networkRef.name` | ComputeSubnetwork |
+| CAPI `Cluster.Name` | `metadata.name` | ContainerCluster |
+| `GCPKCCManagedCluster.Status.NetworkName` | `spec.networkRef.name` | ContainerCluster |
+| `GCPKCCManagedCluster.Status.SubnetworkName` | `spec.subnetworkRef.name` | ContainerCluster |
+| `1` | `spec.initialNodeCount` | ContainerCluster |
+| `"VPC_NATIVE"` | `spec.networkingMode` | ContainerCluster |
+| `{pods, services}` range names | `spec.ipAllocationPolicy` | ContainerCluster (when CAPI CIDRs set) |
+| `"true"` | annotation `cnrm.cloud.google.com/remove-default-node-pool` | ContainerCluster |
+| `GCPKCCManagedCluster.Spec.Subnetwork.Spec.Region` | `spec.location` | ContainerCluster |
+| `{kccMP.Name}` | `metadata.name` | ContainerNodePool |
+| `MachinePool.Spec.ClusterName` | `spec.clusterRef.name` | ContainerNodePool |
+| ContainerCluster `spec.location` | `spec.location` | ContainerNodePool |
+
+**Forced overrides** always apply — CAPI is the source of truth for these fields.
+
+| Source (CAPI) | Destination (KCC) | Resource | Notes |
+|---------------|-------------------|----------|-------|
+| `Cluster.Spec.ClusterNetwork.Pods.CIDRBlocks[0]` | `spec.secondaryIpRange[pods].ipCidrRange` | ComputeSubnetwork | |
+| `Cluster.Spec.ClusterNetwork.Services.CIDRBlocks[0]` | `spec.secondaryIpRange[services].ipCidrRange` | ComputeSubnetwork | |
+| `GCPKCCManagedControlPlane.Spec.Version` | `spec.minMasterVersion` | ContainerCluster | |
+| `MachinePool.Spec.Replicas` | `spec.initialNodeCount` | ContainerNodePool | For initial sizing; autoscaling manages after |
+| `MachinePool.Spec.Template.Spec.Version` | `spec.version` | ContainerNodePool | When set |
+| `MachinePool.Spec.FailureDomains` | `spec.nodeLocations` | ContainerNodePool | When set |
+
+**Not defaulted** (user must always provide):
+
+| Field | Why |
+|-------|-----|
+| `ComputeSubnetwork.spec.ipCidrRange` | User's CIDR choice |
+| `ComputeSubnetwork.spec.region` | User's region choice |
+
+This reduces the minimal viable YAML to:
+
+```yaml
+# GCPKCCManagedCluster — only subnet CIDR and region required
+spec:
+  network: {}
+  subnetwork:
+    spec:
+      ipCidrRange: "10.0.0.0/20"
+      region: us-central1
+
+# GCPKCCManagedControlPlane — just version (location defaulted from subnet region)
+spec:
+  cluster: {}
+  version: "1.31"
+
+# GCPKCCMachinePool — just machine type (name, clusterRef, location defaulted; replicas/version from MachinePool)
+spec:
+  nodePool:
+    spec:
+      nodeConfig:
+        machineType: e2-medium
+```
 
 ### ClusterClass Support
 
@@ -553,6 +607,12 @@ The `CONF_CONNECTOR_VER` Makefile variable (default `1.146.0`) controls which ve
 - [x] `cluster-template-gke-kcc.yaml` — Simple non-topology flavor
 - [x] `cluster-template-gke-kcc-clusterclass.yaml` — ClusterClass with variables (`project`, `region`, `machineType`) and JSON patches into typed KCC fields
 - [x] `cluster-template-gke-kcc-topology.yaml` — Topology-based Cluster referencing the ClusterClass
+
+### Phase 8: Reasonable Defaults + CAPI Field Overrides
+- [ ] `gcpkcc_defaults.go`: 6 pure functions for defaults and overrides (see "Defaults and Overrides" section above)
+- [ ] Controller wiring: refactor `isInfraClusterProvisioned` → `getInfraCluster`, `isControlPlaneInitialized` → `getControlPlane`, fetch owner MachinePool via `exputil.GetOwnerMachinePool`
+- [ ] `gcpkcc_defaults_test.go`: table-driven tests for all 6 functions
+- [ ] Update templates to use minimal YAML (rely on defaults)
 
 ### Future Phases
 
