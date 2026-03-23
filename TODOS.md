@@ -84,10 +84,17 @@ See docs/proposals/config-connector-integration.md for full design.
   - Delete waits for KCC resources: requeues while resources still exist
   - Delete removes finalizer: clears finalizer once resources are gone
 
-## Phase 6: Documentation
+## Phase 6: Makefile + Installation Script ✅ DONE
 
-- [ ] Update cluster templates to use new API type shapes
-- [ ] Update installation guide
+- [x] `hack/install-config-connector.sh <version>` — downloads release bundle from GCS, installs CRDs + operator, applies cluster-mode ConfigConnector resource, waits for readiness. Supports `GCPSA_EMAIL` (key-based) and `WORKLOAD_IDENTITY_POOL` (keyless).
+- [x] `CONF_CONNECTOR_VER ?= 1.146.0` variable in Makefile
+- [x] `create-management-cluster-kcc` target — full kind + CAPI + CAPG + KCC
+- [x] `install-config-connector` standalone target
+
+## Phase 7: Documentation (blocking alpha PR review)
+
+- [ ] Update cluster templates to use new API type shapes (`templates/cluster-template-gke-config-connector-*.yaml`)
+- [ ] Write user guide: quickstart, auth setup, example cluster manifest
 
 ## Future / Beta
 

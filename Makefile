@@ -118,7 +118,7 @@ YQ :=  $(TOOLS_BIN_DIR)/$(YQ_BIN)-$(YQ_VER)
 
 # Other tools versions
 CERT_MANAGER_VER := v1.16.3
-CONF_CONNECTOR_VER ?= 1.125.0
+CONF_CONNECTOR_VER ?= 1.146.0
 
 # Define Docker related variables. Releases should modify and double check these vars.
 export GCP_PROJECT ?= $(shell gcloud config get-value project)
