@@ -15,21 +15,26 @@
 # limitations under the License.
 
 # install-config-connector.sh — installs the Config Connector operator on the
-# current kubectl context and creates a cluster-mode ConfigConnector resource.
+# current kubectl context and creates a cluster-mode ConfigConnector resource
+# backed by a GCP service account key secret. This follows the same credential
+# pattern used by CAPG (a Kubernetes Secret containing the GCP JSON key).
 #
 # Usage:
 #   ./hack/install-config-connector.sh <version>
 #
-# Prerequisites:
-#   - kubectl configured to point at the management cluster
-#   - GCP_PROJECT set to the GCP project Config Connector should manage
-#   - One of:
-#       GCPSA_EMAIL — GCP service account email for key-based auth
-#       WORKLOAD_IDENTITY_POOL — Workload Identity pool for key-less auth
+# Required environment variables:
+#   GCP_PROJECT              — GCP project Config Connector should manage
+#   GOOGLE_APPLICATION_CREDENTIALS — path to the GCP service account key JSON
+#                                    (same variable used by CAPG)
+#
+# Optional:
+#   KCC_CREDENTIALS_SECRET   — name of the Secret to create in cnrm-system
+#                              (default: gcp-key)
 #
 # Example:
-#   GCP_PROJECT=my-project GCPSA_EMAIL=kcc@my-project.iam.gserviceaccount.com \
-#     ./hack/install-config-connector.sh 1.125.0
+#   GCP_PROJECT=my-project \
+#   GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json \
+#     ./hack/install-config-connector.sh 1.146.0
 
 set -o errexit
 set -o nounset
@@ -42,6 +47,13 @@ KUBECTL="${REPO_ROOT}/hack/tools/bin/kubectl"
 cd "${REPO_ROOT}" && make "${KUBECTL##*/}"
 
 GCP_PROJECT="${GCP_PROJECT:?GCP_PROJECT must be set}"
+GOOGLE_APPLICATION_CREDENTIALS="${GOOGLE_APPLICATION_CREDENTIALS:?GOOGLE_APPLICATION_CREDENTIALS must be set (path to GCP service account key JSON)}"
+KCC_CREDENTIALS_SECRET="${KCC_CREDENTIALS_SECRET:-gcp-key}"
+
+if [[ ! -f "${GOOGLE_APPLICATION_CREDENTIALS}" ]]; then
+  echo "ERROR: GOOGLE_APPLICATION_CREDENTIALS file not found: ${GOOGLE_APPLICATION_CREDENTIALS}" >&2
+  exit 1
+fi
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
@@ -60,42 +72,27 @@ echo "Installing Config Connector operator..."
 
 echo "Waiting for Config Connector operator to be ready..."
 "${KUBECTL}" wait --for=condition=Available --timeout=5m \
-  -n cnrm-system deployment/cnrm-controller-manager 2>/dev/null || \
-"${KUBECTL}" wait --for=condition=Ready --timeout=5m \
-  -n cnrm-system pod -l cnrm.cloud.google.com/component=cnrm-controller-manager
+  -n cnrm-system deployment/cnrm-controller-manager
 
-# Create the ConfigConnector resource in cluster mode.
-# Supports key-based auth (GCPSA_EMAIL set) or Workload Identity (WORKLOAD_IDENTITY_POOL set).
-if [[ -n "${GCPSA_EMAIL:-}" ]]; then
-  echo "Configuring Config Connector with service account key auth (${GCPSA_EMAIL})..."
-  "${KUBECTL}" apply -f - <<EOF
+# Create the credentials secret from the GCP service account key JSON.
+# This mirrors how CAPG handles GCP credentials: a Secret with the JSON key.
+echo "Creating credentials secret '${KCC_CREDENTIALS_SECRET}' in cnrm-system..."
+"${KUBECTL}" create secret generic "${KCC_CREDENTIALS_SECRET}" \
+  --namespace cnrm-system \
+  --from-file=key.json="${GOOGLE_APPLICATION_CREDENTIALS}" \
+  --dry-run=client -o yaml | "${KUBECTL}" apply -f -
+
+# Configure Config Connector in cluster mode, referencing the credentials secret.
+echo "Applying ConfigConnector resource (cluster mode, secret: ${KCC_CREDENTIALS_SECRET})..."
+"${KUBECTL}" apply -f - <<EOF
 apiVersion: core.cnrm.cloud.google.com/v1beta1
 kind: ConfigConnector
 metadata:
   name: configconnector.core.cnrm.cloud.google.com
 spec:
   mode: cluster
-  googleServiceAccount: "${GCPSA_EMAIL}"
+  credentialSecretName: "${KCC_CREDENTIALS_SECRET}"
 EOF
-elif [[ -n "${WORKLOAD_IDENTITY_POOL:-}" ]]; then
-  echo "Configuring Config Connector with Workload Identity (${WORKLOAD_IDENTITY_POOL})..."
-  "${KUBECTL}" apply -f - <<EOF
-apiVersion: core.cnrm.cloud.google.com/v1beta1
-kind: ConfigConnector
-metadata:
-  name: configconnector.core.cnrm.cloud.google.com
-spec:
-  mode: cluster
-  googleServiceAccount: "${GCPSA_EMAIL:-}"
-  workloadIdentityPool: "${WORKLOAD_IDENTITY_POOL}"
-EOF
-else
-  echo "WARNING: Neither GCPSA_EMAIL nor WORKLOAD_IDENTITY_POOL is set."
-  echo "         Config Connector operator is installed but NOT configured."
-  echo "         Apply a ConfigConnector resource manually before using KCC resources."
-  echo "         See: https://cloud.google.com/config-connector/docs/how-to/install-upgrade-uninstall"
-  exit 0
-fi
 
 echo "Annotating cnrm-system namespace with GCP project..."
 "${KUBECTL}" annotate namespace cnrm-system \
@@ -106,4 +103,5 @@ echo "Waiting for Config Connector controllers to be ready..."
   -n cnrm-system pod -l cnrm.cloud.google.com/component=cnrm-controller-manager
 
 echo "Config Connector v${CONFIG_CONNECTOR_VERSION} installed successfully."
-echo "GCP project: ${GCP_PROJECT}"
+echo "  GCP project:         ${GCP_PROJECT}"
+echo "  Credentials secret:  cnrm-system/${KCC_CREDENTIALS_SECRET}"

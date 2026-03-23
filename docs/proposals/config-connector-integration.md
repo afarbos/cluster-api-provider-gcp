@@ -493,12 +493,12 @@ func (r *Reconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, opt
 
 ### Config Connector Installation
 
-Config Connector must be installed separately by users before enabling the `ConfigConnector` feature gate. CAPG ships `hack/install-config-connector.sh` to automate this:
+Config Connector must be installed separately by users before enabling the `ConfigConnector` feature gate. CAPG ships `hack/install-config-connector.sh` to automate this. It follows the same credential convention as CAPG: a Kubernetes Secret containing the GCP service account key JSON, referenced via `GOOGLE_APPLICATION_CREDENTIALS` (the standard GCP variable):
 
 ```bash
 # Install Config Connector operator and configure it
 GCP_PROJECT=my-project \
-GCPSA_EMAIL=kcc@my-project.iam.gserviceaccount.com \
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json \
   ./hack/install-config-connector.sh 1.146.0
 ```
 
@@ -507,13 +507,13 @@ Or when creating a fresh management cluster from scratch:
 ```bash
 # Create kind cluster + CAPI + CAPG + Config Connector in one step
 GCP_PROJECT=my-project \
-GCPSA_EMAIL=kcc@my-project.iam.gserviceaccount.com \
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa-key.json \
   make create-management-cluster-kcc
 ```
 
-The script downloads the release bundle from `storage.googleapis.com/configconnector-operator/{version}/release-bundle.tar.gz`, installs CRDs and the operator, applies a cluster-mode `ConfigConnector` resource, and waits for controllers to be ready. Workload Identity is supported via `WORKLOAD_IDENTITY_POOL`.
+The script downloads the release bundle from `storage.googleapis.com/configconnector-operator/{version}/release-bundle.tar.gz`, creates a `gcp-key` Secret in `cnrm-system` from the JSON key file, applies a cluster-mode `ConfigConnector` resource pointing to that secret, and waits for controllers to be ready.
 
-The `CONF_CONNECTOR_VER` Makefile variable (default `1.146.0`) controls which version is installed.
+The `CONF_CONNECTOR_VER` Makefile variable (default `1.146.0`) controls which version is installed. The `KCC_CREDENTIALS_SECRET` variable overrides the secret name (default: `gcp-key`).
 
 ## Implementation Plan
 
