@@ -2,7 +2,7 @@
 
 ## Summary
 
-This proposal introduces Config Connector (KCC) integration in cluster-api-provider-gcp (CAPG), enabling users to manage GKE clusters through Config Connector resources while maintaining full Cluster API (CAPI) v1beta2 contract compliance. The design adds new provider types (`GCPKCCManagedCluster`, `GCPKCCManagedControlPlane`, `GCPKCCMachinePool`) as a parallel path alongside the existing GKE provider — users choose one or the other, not a migration.
+This proposal introduces Config Connector (KCC) integration in cluster-api-provider-gcp (CAPG), enabling users to manage GKE clusters through Config Connector resources while maintaining full Cluster API (CAPI) v1beta2 contract compliance. The design adds new provider types (`GCPKCCManagedCluster`, `GCPKCCManagedControlPlane`, `GCPKCCManagedMachinePool`) as a parallel path alongside the existing GKE provider — users choose one or the other, not a migration.
 
 ## Motivation
 
@@ -10,7 +10,7 @@ This proposal introduces Config Connector (KCC) integration in cluster-api-provi
 
 1. **Enable Advanced GKE Features**: Provide access to the full GKE API surface through Config Connector — Binary Authorization, Security Posture, Managed Prometheus, and hundreds of other fields that CAPG does not and should not expose directly
 2. **Respect all CAPI v1beta2 Contracts**: Full compliance with the [CAPI provider contracts](https://cluster-api.sigs.k8s.io/developer/providers/contracts/overview) — all required fields, status fields, conditions, labels, and kubeconfig conventions
-3. **Stronger Typing than CAPZ/ASO**: Use named typed fields (`spec.network`, `spec.cluster`, `spec.nodePool`) rather than a generic untyped `[]runtime.RawExtension` list, so each resource role is explicit in the API
+3. **Stronger Typing than CAPZ/ASO**: Use named typed fields (`spec.network`, `spec.containerCluster`, `spec.nodePool`) rather than a generic untyped `[]runtime.RawExtension` list, so each resource role is explicit in the API
 4. **Minimize Field Duplication**: Leverage existing CAPI fields (`spec.version`, `spec.replicas`, cluster network CIDRs) instead of re-declaring them; CAPG only patches the CAPI-derived fields
 5. **Maintain CAPI Compatibility**: Ensure full integration with CAPI workflows and tools (`clusterctl`, `kubectl get cluster`, etc.)
 6. **Support GitOps**: Enable Kubernetes-native, declarative GCP resource management via ArgoCD, Flux, or any GitOps tool
@@ -20,8 +20,8 @@ This proposal introduces Config Connector (KCC) integration in cluster-api-provi
 
 1. Support for self-managed (non-GKE) clusters
 2. Automatic migration from existing CAPG clusters to the KCC path
-3. Config Connector installation automation — KCC is a user-managed prerequisite (see below)
-4. Bundling KCC with CAPG
+3. Bundling KCC with CAPG — KCC is a user-managed prerequisite (see below). CAPG provides `hack/install-config-connector.sh` for development and E2E testing only.
+4. Replacing the existing GKE provider — the KCC path permanently coexists as a parallel option for users who need the full GKE API surface
 
 ### Why KCC Must Be Installed Separately
 
@@ -40,11 +40,11 @@ This design is inspired by the [CAPZ Azure Service Operator integration](https:/
 
 | Aspect | CAPZ/ASO | This design |
 |--------|----------|-------------|
-| Resource embedding | `[]runtime.RawExtension` (generic list) | Named typed fields (`spec.network`, `spec.cluster`, etc.) using KCC Go types |
-| Resource identity | Users list any resources in any order | Each field has a defined role — network, subnetwork, cluster, node pool |
-| CAPI field patching | JSON merge patches via mutator pipeline | Direct typed field access on KCC structs |
-| KCC Go dependency | Full ASO Go types imported | KCC generated API types only (`pkg/clients/generated/apis/`); lightweight — no GCP client libs |
-| ClusterClass compatibility | Full schema in CRD | Full schema in CRD — ClusterClass patches are validated against KCC type schemas |
+| Resource embedding | `[]runtime.RawExtension` (generic list) | Named typed fields (`spec.network`, `spec.containerCluster`, etc.) using CAPG-defined intermediate types |
+| Resource identity | Users list any resources in any order | Each field has a defined role — network, subnetwork, containerCluster, nodePool |
+| CAPI field patching | JSON merge patches via mutator pipeline | Direct typed field access on intermediate structs, converted to KCC unstructured at reconcile time |
+| Go dependency | Full ASO Go types imported | No KCC Go dependency — CAPG defines its own types covering common fields; additional fields via `runtime.RawExtension` passthrough |
+| ClusterClass compatibility | Full schema in CRD | Typed schema for common fields (ClusterClass patches validated); passthrough for advanced fields |
 | Dependency tracking | Shared `ResourceReconciler` helper | Per-controller sequential reconciliation |
 
 ### Architecture
@@ -55,7 +55,7 @@ Management Cluster
   CAPI Cluster ──── InfrastructureRef ──▶ GCPKCCManagedCluster
                 ╰── ControlPlaneRef   ──▶ GCPKCCManagedControlPlane
                                               │
-  CAPI MachinePool ─ InfraRef ──▶ GCPKCCMachinePool
+  CAPI MachinePool ─ InfraRef ──▶ GCPKCCManagedMachinePool
 
   GCPKCCManagedCluster
     └── creates ──▶ ComputeNetwork (KCC)   ──▶ GCP VPC
@@ -65,7 +65,7 @@ Management Cluster
     └── creates ──▶ ContainerCluster (KCC)  ──▶ GKE Control Plane
     └── writes  ──▶ <cluster>-kubeconfig (Secret)
 
-  GCPKCCMachinePool
+  GCPKCCManagedMachinePool
     └── creates ──▶ ContainerNodePool (KCC) ──▶ GKE Node Pool
 
   Config Connector controllers watch KCC resources
@@ -77,27 +77,38 @@ Management Cluster
 
 ### Key Principles
 
-1. **Named typed fields** for each resource role (`network`, `subnetwork`, `cluster`, `nodePool`) rather than a generic list
-2. **KCC Go types** per named field — each field uses the concrete KCC generated type (e.g. `kcccontainerv1beta1.ContainerCluster`), giving full CRD schema, ClusterClass patch validation, and `kubectl explain` support
-3. **Lightweight KCC dependency** — imports only `pkg/clients/generated/apis/{compute,container}/v1beta1` which are pure type definitions; no GCP client libraries are pulled in (the heavy deps like BigQuery, Spanner etc. are only in KCC's controller packages, not the API types)
-4. **CAPI field minimization** — only fields that CAPG must patch for CAPI compatibility are enforced; everything else is user-controlled via the full KCC type schema
+1. **Named typed fields** for each resource role (`network`, `subnetwork`, `containerCluster`, `nodePool`) rather than a generic list
+2. **CAPG-defined intermediate types** — each field uses a CAPG-defined Go struct that covers the most commonly used KCC fields (e.g. `GCPKCCContainerClusterSpec`), giving typed CRD schema, ClusterClass patch validation, and `kubectl explain` support for common fields. Advanced/uncommon KCC fields are accessible via a `runtime.RawExtension` passthrough field on each resource.
+3. **No KCC Go module dependency** — CAPG defines its own types mirroring KCC field structure. Controllers convert these to unstructured KCC resources at reconcile time. This avoids coupling to KCC's ALPHA Go client and keeps CRD sizes manageable.
+4. **CAPI field minimization** — only fields that CAPG must patch for CAPI compatibility are enforced; everything else is user-controlled via the typed fields or the passthrough extension
 5. **CAPI v1beta2 contract compliance** — all required spec/status fields, conditions, and labels as per the current contract spec
+6. **Namespace-scoped KCC resources** — KCC resources are created in the same namespace as their owning CAPG resource by default. GCP project is configured at the KCC namespace level via `ConfigConnectorContext`, not repeated per-resource.
+
+### Intermediate Type Pattern
+
+Instead of embedding full KCC Go types (which would produce enormous CRDs and couple CAPG to KCC's ALPHA Go client), CAPG defines its own intermediate types that cover the most commonly used fields for each KCC resource kind. Each intermediate type includes:
+
+- **Typed fields** for commonly-configured options (validated by CRD schema, patchable by ClusterClass)
+- **`AdditionalConfig *runtime.RawExtension`** passthrough for advanced KCC fields not covered by the typed fields
+
+At reconcile time, controllers merge the typed fields and `AdditionalConfig` into an unstructured KCC resource for creation/update. This gives ClusterClass validation on common fields while preserving access to KCC's full API surface.
 
 ### GCPKCCManagedCluster (InfraCluster)
 
 Implements the [InfraCluster contract](https://cluster-api.sigs.k8s.io/developer/providers/contracts/infra-cluster).
 
 ```go
+// +kubebuilder:resource:shortName=gcpkccmc
 type GCPKCCManagedClusterSpec struct {
-    // Network is a complete Config Connector ComputeNetwork resource.
+    // Network defines the Config Connector ComputeNetwork resource.
     // CAPG creates and manages the lifecycle of this resource.
     // +required
-    Network kcccomputev1beta1.ComputeNetwork `json:"network"`
+    Network GCPKCCComputeNetworkSpec `json:"network"`
 
-    // Subnetwork is a complete Config Connector ComputeSubnetwork resource.
+    // Subnetwork defines the Config Connector ComputeSubnetwork resource.
     // CAPG patches spec.secondaryIpRange from Cluster.Spec.ClusterNetwork.
     // +required
-    Subnetwork kcccomputev1beta1.ComputeSubnetwork `json:"subnetwork"`
+    Subnetwork GCPKCCComputeSubnetworkSpec `json:"subnetwork"`
 
     // ControlPlaneEndpoint is the endpoint used to communicate with the control plane.
     // Populated by the ControlPlane provider once the GKE cluster endpoint is available.
@@ -158,11 +169,12 @@ type GCPKCCManagedClusterInitializationStatus struct {
 Implements the [ControlPlane contract](https://cluster-api.sigs.k8s.io/developer/providers/contracts/control-plane).
 
 ```go
+// +kubebuilder:resource:shortName=gcpkccmcp
 type GCPKCCManagedControlPlaneSpec struct {
-    // Cluster is a complete Config Connector ContainerCluster resource.
+    // ContainerCluster defines the Config Connector ContainerCluster resource.
     // CAPG creates this resource and manages its lifecycle.
     // +required
-    Cluster kcccontainerv1beta1.ContainerCluster `json:"cluster"`
+    ContainerCluster GCPKCCContainerClusterSpec `json:"containerCluster"`
 
     // Version is the Kubernetes version for the control plane.
     // +optional
@@ -236,29 +248,30 @@ type GCPKCCManagedControlPlaneInitializationStatus struct {
 
 **Kubeconfig generation:** When the ContainerCluster reaches `Ready=True`, CAPG extracts the cluster CA certificate and endpoint from the ContainerCluster status and generates a kubeconfig using the `exec` credential mode (pointing to the `gke-gcloud-auth-plugin`). The secret is named `<cluster>-kubeconfig`, in the same namespace as the CAPI Cluster, with type `cluster.x-k8s.io/secret` and label `cluster.x-k8s.io/cluster-name=<cluster>`. This follows the CAPI kubeconfig secret convention exactly.
 
-### GCPKCCMachinePool (InfraMachinePool)
+### GCPKCCManagedMachinePool (InfraMachinePool)
 
 Implements the [InfraMachinePool contract](https://cluster-api.sigs.k8s.io/developer/providers/contracts/infra-machine-pool).
 
 ```go
-type GCPKCCMachinePoolSpec struct {
-    // NodePool is a complete Config Connector ContainerNodePool resource.
+// +kubebuilder:resource:shortName=gcpkccmmp
+type GCPKCCManagedMachinePoolSpec struct {
+    // NodePool defines the Config Connector ContainerNodePool resource.
     // CAPG creates this resource and manages its lifecycle.
     // +required
-    NodePool kcccontainerv1beta1.ContainerNodePool `json:"nodePool"`
+    NodePool GCPKCCContainerNodePoolSpec `json:"nodePool"`
 
     // ProviderIDList contains GCE instance provider IDs for nodes in this pool.
     // Format: gce://<project>/<zone>/<instance>
     // Required by the InfraMachinePool v1beta2 contract.
-    // Populated by the controller by listing Node objects in the workload cluster.
+    // Populated by the controller from workload cluster Nodes or GCP Compute API.
     // +optional
     ProviderIDList []string `json:"providerIDList,omitempty"`
 }
 
-type GCPKCCMachinePoolStatus struct {
+type GCPKCCManagedMachinePoolStatus struct {
     // Initialization contains fields per the v1beta2 InfraMachinePool contract.
     // +optional
-    Initialization *GCPKCCMachinePoolInitializationStatus `json:"initialization,omitempty"`
+    Initialization *GCPKCCManagedMachinePoolInitializationStatus `json:"initialization,omitempty"`
 
     // Ready is a v1beta1 compatibility field.
     // Deprecated: will be removed ~August 2026.
@@ -288,7 +301,7 @@ type GCPKCCMachinePoolStatus struct {
     Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
-type GCPKCCMachinePoolInitializationStatus struct {
+type GCPKCCManagedMachinePoolInitializationStatus struct {
     // Provisioned is true when the node pool infrastructure is fully provisioned.
     // Required by the InfraMachinePool v1beta2 contract.
     // +optional
@@ -306,16 +319,16 @@ type GCPKCCMachinePoolInitializationStatus struct {
 | `status.ready` | ✅ v1beta1 compat |
 | `status.conditions[Ready]` | ✅ Mirrored to MachinePool `InfrastructureReady` |
 | `status.conditions[Paused]` | ✅ Set when paused |
-| Finalizer | ✅ `gcpkccmachinepool.infrastructure.cluster.x-k8s.io` |
+| Finalizer | ✅ `gcpkccmanagedmachinepool.infrastructure.cluster.x-k8s.io` |
 
 **ProviderIDList population:** GKE node pools don't expose instance providerIDs through the KCC ContainerNodePool status. To populate `spec.providerIDList`, the controller lists `Node` objects in the **workload cluster** once it is reachable and reads `node.Spec.ProviderID` (format: `gce://<project>/<zone>/<instance>`). This requires the kubeconfig secret to be available first — creating a natural ordering: ControlPlane ready → kubeconfig available → MachinePool can populate providerIDs.
 
 ### Template Types (for ClusterClass support)
 
 Each resource type has a corresponding template type for ClusterClass compatibility:
-- `GCPKCCManagedClusterTemplate` / `GCPKCCManagedClusterTemplateList`
-- `GCPKCCManagedControlPlaneTemplate` / `GCPKCCManagedControlPlaneTemplateList`
-- `GCPKCCMachinePoolTemplate` / `GCPKCCMachinePoolTemplateList`
+- `GCPKCCManagedClusterTemplate` (`gcpkccmct`) / `GCPKCCManagedClusterTemplateList`
+- `GCPKCCManagedControlPlaneTemplate` (`gcpkccmcpt`) / `GCPKCCManagedControlPlaneTemplateList`
+- `GCPKCCManagedMachinePoolTemplate` (`gcpkccmmpt`) / `GCPKCCManagedMachinePoolTemplateList`
 
 Templates use SSA dry-run compatible webhooks (controller-runtime `CustomValidator`) per the CAPI ClusterClass contract.
 
@@ -369,21 +382,18 @@ This reduces the minimal viable YAML to:
 spec:
   network: {}
   subnetwork:
-    spec:
-      ipCidrRange: "10.0.0.0/20"
-      region: us-central1
+    ipCidrRange: "10.0.0.0/20"
+    region: us-central1
 
 # GCPKCCManagedControlPlane — just version (location defaulted from subnet region)
 spec:
-  cluster: {}
+  containerCluster: {}
   version: "1.31"
 
-# GCPKCCMachinePool — just machine type (name, clusterRef, location defaulted; replicas/version from MachinePool)
+# GCPKCCManagedMachinePool — just machine type (name, clusterRef, location defaulted; replicas/version from MachinePool)
 spec:
   nodePool:
-    spec:
-      nodeConfig:
-        machineType: e2-medium
+    machineType: e2-medium
 ```
 
 ### ClusterClass Support
@@ -399,7 +409,7 @@ variables:
       type: string  # validated against ContainerClusterSpec.Location (string)
 ```
 
-**Patches** navigate into the typed KCC structs with validated paths:
+**Patches** navigate into the typed intermediate structs with validated paths:
 ```yaml
 patches:
 - definitions:
@@ -407,7 +417,7 @@ patches:
       kind: GCPKCCManagedControlPlaneTemplate
     jsonPatches:
     - op: replace
-      path: /spec/template/spec/cluster/spec/location  # schema knows this is a string
+      path: /spec/template/spec/containerCluster/location  # schema knows this is a string
       valueFrom:
         variable: region
 ```
@@ -430,51 +440,55 @@ The controllers have a natural dependency chain that must be respected:
 1. GCPKCCManagedCluster     → creates network + subnetwork
 2. GCPKCCManagedControlPlane → creates ContainerCluster (refs network/subnet)
                               → writes kubeconfig secret
-3. GCPKCCMachinePool         → creates ContainerNodePool (refs cluster)
+3. GCPKCCManagedMachinePool         → creates ContainerNodePool (refs cluster)
                               → populates providerIDList from workload cluster Nodes
 ```
 
 ### GCPKCCManagedCluster Controller
 
 **Responsibilities:**
-1. Check feature gate `ConfigConnector` is enabled
+1. Check feature gate `ConfigConnector` at registration in `main.go` (matching existing GKE pattern — not in Reconcile())
 2. Check KCC CRDs are installed (`verifyKCCCRDs` in `SetupWithManager`)
 3. Check `cluster.x-k8s.io/managed-by` label — skip if externally managed
 4. Add finalizer
-5. Create `ComputeNetwork` from `spec.network` (typed `kcccomputev1beta1.ComputeNetwork`, DeepCopy + set namespace/owner ref)
-6. Create `ComputeSubnetwork` from `spec.subnetwork` (typed), patching `Spec.SecondaryIpRange` directly from `Cluster.Spec.ClusterNetwork`
-7. Check readiness via typed `isKCCConditionTrue(network.Status.Conditions, ReadyConditionType)`
-8. Update `status.initialization.provisioned` and conditions
+5. Create `ComputeNetwork` from `spec.network` — convert intermediate type to unstructured KCC resource, set namespace (same as owner) and owner ref
+6. Create `ComputeSubnetwork` from `spec.subnetwork`, patching secondary IP ranges from `Cluster.Spec.ClusterNetwork`
+7. Watch owned ComputeNetwork and ComputeSubnetwork via `Owns()` for immediate status propagation (no polling)
+8. Check readiness via `isKCCConditionTrue` on watched resource status
+9. Update `status.initialization.provisioned` and conditions
+10. Set reconciliation timeout condition: if resources not Ready within 30m, set `Degraded` condition
 
-**Deletion:** The controller checks for KCC resource absence before removing the finalizer. Owner references on KCC resources enable cascaded GC.
+**Update strategy:** Use `Patch` (strategic merge patch) for reconciling existing KCC resources. CAPG-managed fields (forced overrides) are re-applied each reconcile; user-managed fields are preserved. Forced overrides that change a user-provided value are documented but do not emit events.
+
+**Deletion:** The controller checks for KCC resource absence before removing the finalizer. Owner references on KCC resources enable cascaded GC. Sets `DeletionBlocked` condition with actionable message after 30m timeout.
 
 ### GCPKCCManagedControlPlane Controller
 
 **Responsibilities:**
-1. Check feature gate, KCC CRDs, pause, externally-managed
+1. Check feature gate (at registration in `main.go`, matching existing GKE pattern), KCC CRDs, pause, externally-managed
 2. Add finalizer
 3. Gate on `GCPKCCManagedCluster.status.initialization.provisioned = true`
-4. Create `ContainerCluster` from `spec.cluster` (typed `kcccontainerv1beta1.ContainerCluster`)
-5. Check readiness via typed `isKCCConditionTrue(containerCluster.Status.Conditions, ReadyConditionType)`
-6. Extract endpoint from `containerCluster.Status.Endpoint` (typed `*string`)
-7. Extract CA cert from `containerCluster.Status.ObservedState.MasterAuth.ClusterCaCertificate` (typed)
-8. Generate kubeconfig with `gke-gcloud-auth-plugin` exec credential; write `<cluster>-kubeconfig` secret
-9. Set `status.externalManagedControlPlane = true`, `status.initialization.controlPlaneInitialized`
+4. Create `ContainerCluster` from `spec.containerCluster` (convert intermediate type to unstructured KCC resource)
+5. Watch owned ContainerCluster via `Owns()` for immediate status propagation (no polling)
+6. Extract endpoint and CA cert from ContainerCluster status
+7. Generate kubeconfig using existing GKE auth pattern (reuse from current GKE provider)
+8. Set `status.externalManagedControlPlane = true`, `status.initialization.controlPlaneInitialized`
+9. Set reconciliation timeout condition: if ContainerCluster not Ready within 30m, set `Degraded` condition
 
-**Deletion:** Checks ContainerCluster is gone before removing finalizer.
+**Deletion:** Checks ContainerCluster is gone before removing finalizer. Sets `DeletionBlocked` condition with actionable message after 30m timeout.
 
-### GCPKCCMachinePool Controller
+### GCPKCCManagedMachinePool Controller
 
 **Responsibilities:**
-1. Check feature gate, KCC CRDs, pause
+1. Check feature gate (at registration in `main.go`), KCC CRDs, pause
 2. Add finalizer
 3. Gate on `GCPKCCManagedControlPlane.status.initialization.controlPlaneInitialized = true`
-4. Create `ContainerNodePool` from `spec.nodePool` (typed `kcccontainerv1beta1.ContainerNodePool`)
-5. Check readiness via typed conditions
-6. When kubeconfig available: list workload cluster `Node` objects to populate `spec.providerIDList`
+4. Create `ContainerNodePool` from `spec.nodePool` (convert intermediate type to unstructured KCC resource)
+5. Watch owned ContainerNodePool via `Owns()` for immediate status propagation and real-time `status.replicas` updates
+6. Populate `spec.providerIDList` — investigate GCP Compute API (instance group URLs) as primary, workload cluster Node listing as fallback
 7. Set `status.initialization.provisioned`, `status.replicas`, `status.readyReplicas`, conditions
 
-**Deletion:** Checks ContainerNodePool is gone before removing finalizer.
+**Deletion:** Checks ContainerNodePool is gone before removing finalizer. Sets `DeletionBlocked` condition after 30m timeout.
 
 ### RBAC
 
@@ -512,7 +526,7 @@ var defaultCAPGFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
 
 Enable with: `--feature-gates=ConfigConnector=true`
 
-Every controller's `Reconcile()` function must check this gate as step 2 and return early if disabled.
+The feature gate is checked at controller registration time in `main.go` (matching the existing GKE pattern), not in every `Reconcile()` call. If the gate is disabled, the controllers are never registered and impose zero runtime cost.
 
 ### KCC Startup Check
 
@@ -555,55 +569,63 @@ The `CONF_CONNECTOR_VER` Makefile variable (default `1.146.0`) controls which ve
 
 ## Implementation Plan
 
-### Phase 1: API Types
-- [ ] Full CAPI v1beta2 compliant types with typed KCC Go fields
-- [ ] v1beta2 conditions, CRD labels, template types
-- [ ] KCC Go types from `pkg/clients/generated/apis/`, `allowDangerousTypes=true`
-- [ ] `make generate` — 6 CRDs with full KCC schemas, deepcopy
+### Phase 1: API Types + Intermediate Type Definitions
+- [ ] CAPG-defined intermediate types for ComputeNetwork, ComputeSubnetwork, ContainerCluster, ContainerNodePool (covering common fields + `AdditionalConfig` passthrough)
+- [ ] Full CAPI v1beta2 compliant provider types: `GCPKCCManagedCluster`, `GCPKCCManagedControlPlane`, `GCPKCCManagedMachinePool`
+- [ ] v1beta2 conditions, CRD labels, template types with short names (`gcpkccmc`, `gcpkccmcp`, `gcpkccmmp`, etc.)
+- [ ] `+kubebuilder:printcolumn` markers: Ready, Version, Replicas, Age as appropriate per type
+- [ ] Conversion helpers: intermediate types → unstructured KCC resources
+- [ ] `make generate` — 6 CRDs with manageable schemas, deepcopy
 
-### Phase 2: GCPKCCManagedCluster Controller
-- [ ] Feature gate, KCC CRD check, externally-managed, pause, finalizer
-- [ ] Creates typed ComputeNetwork + ComputeSubnetwork
-- [ ] Patches secondary CIDR ranges, deletion gate
-- [ ] `status.initialization.provisioned`, v1beta2 conditions
+### Phase 2: GCPKCCManagedCluster Controller + Defaults/Overrides
+- [ ] Feature gate at registration in `main.go`, KCC CRD check, externally-managed, pause, finalizer
+- [ ] Defaults: `applyNetworkDefaults`, `applySubnetworkDefaults` (inline with controller)
+- [ ] Overrides: CAPI CIDR ranges → secondary IP ranges (forced)
+- [ ] Creates ComputeNetwork + ComputeSubnetwork (convert intermediate → unstructured, set namespace from owner, set owner ref)
+- [ ] Watches owned KCC resources via `Owns()` for immediate status propagation
+- [ ] Patches existing KCC resources via strategic merge patch (preserves user-managed fields)
+- [ ] `status.initialization.provisioned`, v1beta2 conditions, 30m reconciliation timeout → `Degraded` condition
+- [ ] Deletion gate with `DeletionBlocked` condition after 30m timeout
 
-### Phase 3: GCPKCCManagedControlPlane Controller
-- [ ] Feature gate, KCC CRD, externally-managed, pause, finalizer
+### Phase 3: GCPKCCManagedControlPlane Controller + Defaults/Overrides
+- [ ] Feature gate at registration, KCC CRD, externally-managed, pause, finalizer
+- [ ] Defaults: `applyContainerClusterDefaults` (inline); region defaulted from subnetwork if not set
+- [ ] Overrides: `spec.version` → `minMasterVersion` (forced)
 - [ ] Gated on infra cluster provisioned (via `getInfraCluster`)
-- [ ] Creates typed ContainerCluster, kubeconfig generation
+- [ ] Creates ContainerCluster, kubeconfig generation (reuse existing GKE auth pattern)
+- [ ] Watches owned ContainerCluster via `Owns()`
 - [ ] `status.initialization.controlPlaneInitialized`, `externalManagedControlPlane = true`
+- [ ] 30m reconciliation timeout, deletion timeout
 
-### Phase 4: GCPKCCMachinePool Controller
-- [ ] Feature gate, KCC CRD, pause, finalizer
+### Phase 4: GCPKCCManagedMachinePool Controller + Defaults/Overrides
+- [ ] Feature gate at registration, KCC CRD, pause, finalizer
+- [ ] Defaults: `applyContainerNodePoolDefaults` (inline)
+- [ ] Overrides: `replicas` → `initialNodeCount`, `version`, `failureDomains` → `nodeLocations` (forced, document autoscaler interaction)
 - [ ] Gated on control plane initialized (via `getControlPlane`)
-- [ ] Creates typed ContainerNodePool, `spec.providerIDList` from workload Nodes
+- [ ] Creates ContainerNodePool, watches via `Owns()` for real-time `status.replicas` updates
+- [ ] `spec.providerIDList` — investigate GCP Compute API as primary source, workload Node listing as fallback
 - [ ] Fetches owner MachinePool via `exputil.GetOwnerMachinePool`
+- [ ] 30m reconciliation timeout, deletion timeout
 
 ### Phase 5: Tests
-- [ ] Pure function tests: `isKCCConditionTrue`, `patchSubnetworkCIDRs`
-- [ ] Defaults tests: all 6 `apply*` functions
-- [ ] Reconciler tests: GCPKCCManagedCluster (feature gate, CRUD, delete flows)
+- [ ] Pure function tests: `isKCCConditionTrue`, `patchSubnetworkCIDRs`, intermediate → unstructured conversion
+- [ ] Defaults/overrides tests: all `apply*` functions (table-driven)
+- [ ] Reconciler tests: all 3 controllers (feature gate, CRUD, delete flows, timeout conditions)
 
-### Phase 6: Makefile + Installation Script
-- [ ] `hack/install-config-connector.sh` with secret-based credentials
-- [ ] Makefile targets: `create-management-cluster-kcc`, `install-config-connector`
-
-### Phase 7: Template Flavors
+### Phase 6: Template Flavors
 - [ ] `cluster-template-gke-kcc.yaml` — simple non-topology
 - [ ] `cluster-template-gke-kcc-clusterclass.yaml` — ClusterClass with variables + typed patches
 - [ ] `cluster-template-gke-kcc-topology.yaml` — topology-based
 
-### Phase 8: Reasonable Defaults + CAPI Field Overrides
-- [ ] `gcpkcc_defaults.go`: 6 pure functions (see "Defaults and Overrides" section)
-- [ ] Controller wiring: defaults after DeepCopy, overrides from CAPI fields
-- [ ] `gcpkcc_defaults_test.go`: table-driven tests
+### Phase 7: Makefile + Installation Script (for development/E2E only)
+- [ ] `hack/install-config-connector.sh` with secret-based credentials (development/E2E automation, not for cluster-api-operator installs)
+- [ ] Makefile targets: `create-management-cluster-kcc`, `install-config-connector`
 
 ### Future Phases
 
-- [ ] Integration tests (kind + KCC operator)
+- [ ] Integration tests within existing framework (user-driven initially, automation last)
 - [ ] E2E tests (create/scale/upgrade/delete lifecycle)
 - [ ] Validation webhooks for inline CC specs
-- [ ] Event-driven watches on KCC resources (replace 30s polling)
 - [ ] Graduation to beta
 - [ ] Additional CC resources (CloudSQL, CloudMemorystore, etc.)
 
@@ -665,17 +687,17 @@ The `CONF_CONNECTOR_VER` Makefile variable (default `1.146.0`) controls which ve
 **Impact**: Generated kubeconfig uses `gke-gcloud-auth-plugin` exec credential, which requires the plugin to be installed on the user's machine
 **Mitigation**: Document the requirement. Consider also generating a service-account-token-based kubeconfig as a fallback for tooling that doesn't support exec credentials.
 
-### Risk: providerIDList Population Requires Workload Cluster Access
-**Impact**: GCPKCCMachinePool can't populate `spec.providerIDList` until the workload cluster is reachable
-**Mitigation**: This is the same ordering constraint as the existing GKE provider. Gate providerIDList population on kubeconfig secret availability. CAPI tolerates an empty providerIDList during provisioning.
-
-### Risk: KCC Go Type Version Coupling
-**Impact**: CAPG's KCC type version is pinned in go.mod. New KCC fields added after this version won't be available until CAPG bumps the dependency. KCC marks their go-client as ALPHA, meaning breaking changes are possible.
-**Mitigation**: Pin to a known-stable KCC version (`v1.147.1`). The generated API types are auto-generated from Terraform schemas and change infrequently. Only the `pkg/clients/generated/apis/` packages are imported — these have zero GCP client library dependencies, so dependency conflicts are minimal. Bump the KCC version as part of regular dependency updates.
+### Risk: providerIDList Population
+**Impact**: GCPKCCManagedMachinePool needs instance provider IDs for CAPI contract compliance
+**Mitigation**: Investigate GCP Compute API (instance group URLs from node pool) as primary source — this works even when the workload cluster is unreachable. Fall back to workload cluster Node listing if Compute API is insufficient. Gate on kubeconfig secret availability for fallback path. CAPI tolerates an empty providerIDList during provisioning.
 
 ### Risk: Two Ways to Create GKE Clusters
 **Impact**: User confusion between standard CAPG GKE path and KCC path
-**Mitigation**: Clear documentation with a comparison table. Each path has a distinct set of CRD kinds — there is no overlap or ambiguity at runtime.
+**Mitigation**: The two paths permanently coexist. Clear documentation with a comparison table and decision framework ("use KCC path if you need full GKE API surface; use existing path for simpler setups"). Each path has a distinct set of CRD kinds — there is no overlap or ambiguity at runtime.
+
+### Risk: KCC Resource Reconciliation Timeout
+**Impact**: KCC resources can take 10-30 minutes to reconcile; if KCC gets wedged (IAM issues, quota, API bugs), CAPG controllers poll forever
+**Mitigation**: 30-minute reconciliation timeout. If a KCC resource is not Ready within 30m, controllers set a `Degraded` condition with the last KCC status message. During deletion, set `DeletionBlocked` condition after 30m with actionable guidance.
 
 ## Alternatives Considered
 
@@ -699,15 +721,15 @@ type Spec struct {
 **Cons**: CRD schema is opaque — ClusterClass variable patches have no schema validation; `kubectl explain` shows nothing; users get no admission-time validation on the embedded resource structure
 **Decision**: Rejected. Analysis showed that KCC's generated API type packages (`pkg/clients/generated/apis/`) import only standard k8s types (no GCP client libraries), so the dependency footprint is lightweight. The ClusterClass usability gain outweighs the version coupling concern.
 
-### Alternative 3 (adopted): KCC Go Types per Named Field
+### Alternative 3: KCC Go Types per Named Field
 ```go
 type Spec struct {
     Cluster kcccontainerv1beta1.ContainerCluster `json:"cluster"`
 }
 ```
-**Pros**: Full CRD schema generated by controller-gen → ClusterClass patches validated → `kubectl explain` works; typed controller code (no `unstructured.NestedString`); compile-time safety
-**Cons**: CAPG's KCC type version is pinned to the KCC module version in go.mod; new KCC fields require a CAPG dependency bump. However, since the KCC go-client is auto-generated and marked ALPHA, this is an acceptable tradeoff for alpha.
-**Decision**: Adopted.
+**Pros**: Full CRD schema generated by controller-gen → ClusterClass patches validated → `kubectl explain` works; typed controller code; compile-time safety
+**Cons**: CRDs become enormous (500KB-1MB+ per CRD embedding full KCC types); couples CAPG to KCC's ALPHA Go module; `allowDangerousTypes=true` required globally; KCC monorepo dependency may conflict with existing CAPG deps
+**Decision**: Rejected. CRD size risk and ALPHA Go client coupling are too high. Intermediate types provide ClusterClass validation for common fields without these risks.
 
 ### Alternative 4: Reference-Only Pattern
 ```go
@@ -719,6 +741,28 @@ type Spec struct {
 **Pros**: Users create KCC resources separately; cleaner separation
 **Cons**: CAPG can't patch CAPI-derived fields (CIDRs, versions) onto user-created resources; no lifecycle management
 **Decision**: Rejected. Patching CAPI fields onto CC resources is the core value proposition.
+
+### Alternative 5 (adopted): CAPG-Defined Intermediate Types per Named Field
+```go
+type GCPKCCManagedControlPlaneSpec struct {
+    ContainerCluster GCPKCCContainerClusterSpec `json:"containerCluster"`
+}
+
+type GCPKCCContainerClusterSpec struct {
+    // Common typed fields — validated by CRD schema, patchable by ClusterClass
+    Location        *string `json:"location,omitempty"`
+    NetworkingMode  *string `json:"networkingMode,omitempty"`
+    // ... other commonly-used fields
+
+    // AdditionalConfig allows setting any KCC ContainerCluster field not covered above.
+    // Merged into the KCC resource at reconcile time.
+    // +optional
+    AdditionalConfig *runtime.RawExtension `json:"additionalConfig,omitempty"`
+}
+```
+**Pros**: Manageable CRD sizes; no KCC Go module dependency; ClusterClass patches validated for common fields; `kubectl explain` works for common fields; advanced KCC fields accessible via `AdditionalConfig` passthrough; no `allowDangerousTypes` needed
+**Cons**: Common fields must be manually curated — new KCC fields require a CAPG PR to add to the intermediate type (same as the existing GKE path, but for a smaller set of fields). `AdditionalConfig` fields are not schema-validated.
+**Decision**: Adopted. Best balance of ClusterClass usability, CRD size, and dependency hygiene. The `AdditionalConfig` passthrough preserves access to KCC's full API surface for power users.
 
 ## References
 
@@ -732,9 +776,22 @@ type Spec struct {
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | `/plan-ceo-review` | Scope & strategy | 1 | ⚠️ Proposal revised | See above |
-| Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | Unavailable |
-| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | ⚠️ Proposal revised | See above |
-| Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | No UI scope |
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 2 | ✅ Proposal revised | Phase ordering fixed, coexistence clarified, timeouts added |
+| Adversarial Review | `/codex review` | Independent 2nd opinion | 1 | ✅ Proposal revised | CRD size → intermediate types, providerIDList investigation, auth clarified |
+| Eng Review | `/plan-eng-review` | Architecture & tests | 1 | ⚠️ Timed out | Covered by adversarial review |
+| Design Review | `/plan-design-review` | API ergonomics | 1 | ✅ Proposal revised | Renamed MachinePool, added short names, containerCluster field, printcolumns |
 
-**VERDICT:** DESIGN COMPLETE — Ready for review. See TODOS.md for implementation phases. No code has been written yet.
+**Key changes from review round 2:**
+- Switched from full KCC Go type embedding to CAPG-defined intermediate types (CRD size + dependency risk)
+- Merged Phase 8 (defaults/overrides) into Phases 2-4 (they are core controller logic)
+- Renamed `GCPKCCMachinePool` → `GCPKCCManagedMachinePool` (consistency)
+- Renamed `spec.cluster` → `spec.containerCluster` (disambiguation)
+- Added short names, print columns for all types
+- Feature gate at registration time (`main.go`), not in `Reconcile()`
+- Watches via `Owns()` instead of 30s polling
+- 30m reconciliation/deletion timeouts with `Degraded`/`DeletionBlocked` conditions
+- Namespace-level project via KCC `ConfigConnectorContext`
+- Strategic merge patch for updates
+- Permanent coexistence with existing GKE path (not a replacement)
+
+**VERDICT:** DESIGN REVISED — Ready for implementation. See TODOS.md for phased plan.
