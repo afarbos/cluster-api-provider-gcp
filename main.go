@@ -28,8 +28,6 @@ import (
 
 	// +kubebuilder:scaffold:imports
 
-	kcccomputev1beta1 "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/clients/generated/apis/compute/v1beta1"
-	kcccontainerv1beta1 "github.com/GoogleCloudPlatform/k8s-config-connector/pkg/clients/generated/apis/container/v1beta1"
 	"github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -72,8 +70,6 @@ func init() {
 	_ = clusterv1.AddToScheme(scheme)
 	_ = infrav1exp.AddToScheme(scheme)
 	_ = gkebootstrapv1exp.AddToScheme(scheme)
-	_ = kcccomputev1beta1.AddToScheme(scheme)
-	_ = kcccontainerv1beta1.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -261,36 +257,6 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) error {
 				WatchFilterValue: watchFilterValue,
 			}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: gkeConfigConcurrency}); err != nil {
 				return fmt.Errorf("setting up GKEConfig controller: %w", err)
-			}
-		}
-
-		if feature.Gates.Enabled(feature.ConfigConnector) {
-			setupLog.Info("Enabling Config Connector reconcilers")
-
-			if err := (&expcontrollers.GCPKCCManagedClusterReconciler{
-				Client:           mgr.GetClient(),
-				ReconcileTimeout: reconcileTimeout,
-				WatchFilterValue: watchFilterValue,
-			}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: gcpClusterConcurrency}); err != nil {
-				return fmt.Errorf("setting up GCPKCCManagedCluster controller: %w", err)
-			}
-
-			if err := (&expcontrollers.GCPKCCManagedControlPlaneReconciler{
-				Client:           mgr.GetClient(),
-				ReconcileTimeout: reconcileTimeout,
-				WatchFilterValue: watchFilterValue,
-			}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: gcpClusterConcurrency}); err != nil {
-				return fmt.Errorf("setting up GCPKCCManagedControlPlane controller: %w", err)
-			}
-
-			if feature.Gates.Enabled(capifeature.MachinePool) {
-				if err := (&expcontrollers.GCPKCCMachinePoolReconciler{
-					Client:           mgr.GetClient(),
-					ReconcileTimeout: reconcileTimeout,
-					WatchFilterValue: watchFilterValue,
-				}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: gcpMachineConcurrency}); err != nil {
-					return fmt.Errorf("setting up GCPKCCMachinePool controller: %w", err)
-				}
 			}
 		}
 	}

@@ -1,4 +1,3 @@
-<!-- /autoplan restore point: /Users/afarbos/.gstack/projects/afarbos-cluster-api-provider-gcp/configconnector-autoplan-restore-20260323-092043.md -->
 # Config Connector Integration Proposal
 
 ## Summary
@@ -556,63 +555,48 @@ The `CONF_CONNECTOR_VER` Makefile variable (default `1.146.0`) controls which ve
 
 ## Implementation Plan
 
-### Phase 1: API Types ✅ DONE
-- [x] Full CAPI v1beta2 compliant types: `status.initialization.provisioned`, `status.initialization.controlPlaneInitialized`, `status.externalManagedControlPlane`, `spec.providerIDList`
-- [x] v1beta2 conditions (`[]metav1.Condition`) on all types; no v1beta1 failureReason/failureMessage
-- [x] CRD label `cluster.x-k8s.io/v1beta2: v1beta2` on all 6 CRDs
-- [x] Template types for ClusterClass support
-- [x] DeepCopy and CRDs regenerated (`make generate`)
+### Phase 1: API Types
+- [ ] Full CAPI v1beta2 compliant types with typed KCC Go fields
+- [ ] v1beta2 conditions, CRD labels, template types
+- [ ] KCC Go types from `pkg/clients/generated/apis/`, `allowDangerousTypes=true`
+- [ ] `make generate` — 6 CRDs with full KCC schemas, deepcopy
 
-### Phase 2: GCPKCCManagedCluster Controller ✅ DONE
-- [x] Feature gate check, KCC CRD check (ComputeNetwork + ComputeSubnetwork), externally-managed skip, pause handling
-- [x] Creates ComputeNetwork and ComputeSubnetwork via `*unstructured.Unstructured`
-- [x] Patches secondary CIDR ranges from `Cluster.Spec.ClusterNetwork` into subnetwork
-- [x] Deletion gate: removes finalizer only once KCC resources are gone
-- [x] `status.initialization.provisioned`, v1beta2 conditions (Ready, Paused)
+### Phase 2: GCPKCCManagedCluster Controller
+- [ ] Feature gate, KCC CRD check, externally-managed, pause, finalizer
+- [ ] Creates typed ComputeNetwork + ComputeSubnetwork
+- [ ] Patches secondary CIDR ranges, deletion gate
+- [ ] `status.initialization.provisioned`, v1beta2 conditions
 
-### Phase 3: GCPKCCManagedControlPlane Controller ✅ DONE
-- [x] Feature gate, KCC CRD, externally-managed, pause handling
-- [x] Gated on `GCPKCCManagedCluster.status.initialization.provisioned`
-- [x] Creates ContainerCluster; extracts endpoint + CA cert from KCC status
-- [x] Generates kubeconfig with `gke-gcloud-auth-plugin` exec credential; writes `<cluster>-kubeconfig` secret
-- [x] `status.initialization.controlPlaneInitialized`, `status.externalManagedControlPlane = true`, conditions
+### Phase 3: GCPKCCManagedControlPlane Controller
+- [ ] Feature gate, KCC CRD, externally-managed, pause, finalizer
+- [ ] Gated on infra cluster provisioned (via `getInfraCluster`)
+- [ ] Creates typed ContainerCluster, kubeconfig generation
+- [ ] `status.initialization.controlPlaneInitialized`, `externalManagedControlPlane = true`
 
-### Phase 4: GCPKCCMachinePool Controller ✅ DONE
-- [x] Feature gate, KCC CRD, pause handling
-- [x] Gated on `GCPKCCManagedControlPlane.status.initialization.controlPlaneInitialized`
-- [x] Creates ContainerNodePool; populates `spec.providerIDList` from workload cluster `Node.Spec.ProviderID`
-- [x] `status.readyReplicas` reflects actual node count (not blindly equal to Replicas)
-- [x] `status.initialization.provisioned`, conditions
+### Phase 4: GCPKCCMachinePool Controller
+- [ ] Feature gate, KCC CRD, pause, finalizer
+- [ ] Gated on control plane initialized (via `getControlPlane`)
+- [ ] Creates typed ContainerNodePool, `spec.providerIDList` from workload Nodes
+- [ ] Fetches owner MachinePool via `exputil.GetOwnerMachinePool`
 
-### Phase 5: Unit Tests ✅ DONE
-- [x] `isKCCConditionTrue` (typed `[]kcck8sv1alpha1.Condition`): Ready=True/False, nil, absent, multi-condition
-- [x] `patchSubnetworkCIDRs` (typed `*kcccomputev1beta1.ComputeSubnetwork`): no network, pods/services CIDRs, update in place
-- [x] GCPKCCManagedCluster reconciler: feature gate, not found, no owner, normal, readiness, delete waits/completes
+### Phase 5: Tests
+- [ ] Pure function tests: `isKCCConditionTrue`, `patchSubnetworkCIDRs`
+- [ ] Defaults tests: all 6 `apply*` functions
+- [ ] Reconciler tests: GCPKCCManagedCluster (feature gate, CRUD, delete flows)
 
-### Phase 5.5: Switch to Typed KCC Go Types ✅ DONE
-- [x] Replaced `runtime.RawExtension` with KCC Go types (`kcccomputev1beta1.ComputeNetwork`, `kcccontainerv1beta1.ContainerCluster`, etc.)
-- [x] Controllers: direct typed field access (no unstructured parsing), `isKCCConditionTrue` with typed conditions
-- [x] KCC dependency: `pkg/clients/generated/apis/` only — pure type definitions, no GCP client libs
-- [x] CRDs now include full KCC field schemas (ClusterClass patches validated, `kubectl explain` works)
-- [x] `allowDangerousTypes=true` in controller-gen (KCC uses `float64` fields)
-- [x] KCC types registered in scheme (`main.go` + `suite_test.go`)
+### Phase 6: Makefile + Installation Script
+- [ ] `hack/install-config-connector.sh` with secret-based credentials
+- [ ] Makefile targets: `create-management-cluster-kcc`, `install-config-connector`
 
-### Phase 6: Makefile + Installation Script ✅ DONE
-- [x] `hack/install-config-connector.sh` — downloads release bundle from GCS, creates credentials Secret from `GOOGLE_APPLICATION_CREDENTIALS` JSON key, applies cluster-mode ConfigConnector with `spec.credentialSecretName`, waits for readiness
-- [x] `CONF_CONNECTOR_VER ?= 1.146.0` variable in Makefile
-- [x] `create-management-cluster-kcc` target — full kind + CAPI + CAPG + KCC setup
-- [x] `install-config-connector` standalone target
-
-### Phase 7: Template Flavors ✅ DONE
-- [x] `cluster-template-gke-kcc.yaml` — Simple non-topology flavor
-- [x] `cluster-template-gke-kcc-clusterclass.yaml` — ClusterClass with variables (`project`, `region`, `machineType`) and JSON patches into typed KCC fields
-- [x] `cluster-template-gke-kcc-topology.yaml` — Topology-based Cluster referencing the ClusterClass
+### Phase 7: Template Flavors
+- [ ] `cluster-template-gke-kcc.yaml` — simple non-topology
+- [ ] `cluster-template-gke-kcc-clusterclass.yaml` — ClusterClass with variables + typed patches
+- [ ] `cluster-template-gke-kcc-topology.yaml` — topology-based
 
 ### Phase 8: Reasonable Defaults + CAPI Field Overrides
-- [ ] `gcpkcc_defaults.go`: 6 pure functions for defaults and overrides (see "Defaults and Overrides" section above)
-- [ ] Controller wiring: refactor `isInfraClusterProvisioned` → `getInfraCluster`, `isControlPlaneInitialized` → `getControlPlane`, fetch owner MachinePool via `exputil.GetOwnerMachinePool`
-- [ ] `gcpkcc_defaults_test.go`: table-driven tests for all 6 functions
-- [ ] Update templates to use minimal YAML (rely on defaults)
+- [ ] `gcpkcc_defaults.go`: 6 pure functions (see "Defaults and Overrides" section)
+- [ ] Controller wiring: defaults after DeepCopy, overrides from CAPI fields
+- [ ] `gcpkcc_defaults_test.go`: table-driven tests
 
 ### Future Phases
 
@@ -625,9 +609,9 @@ The `CONF_CONNECTOR_VER` Makefile variable (default `1.146.0`) controls which ve
 
 ## Testing Strategy
 
-### Unit Tests (required for alpha) ✅ DONE
-- `isKCCConditionTrue` and `patchSubnetworkCIDRs` tested with typed KCC structs
-- GCPKCCManagedCluster reconciler tested with fake client + typed KCC objects
+### Unit Tests (required for alpha)
+- Pure functions: `isKCCConditionTrue`, `patchSubnetworkCIDRs`, all 6 `apply*Default/Override` functions
+- Reconciler tests with fake client + typed KCC objects
 - Coverage: feature gate, not found, no owner, normal reconcile, readiness gate, delete flows
 
 ### Integration Tests (required for beta)
@@ -644,15 +628,16 @@ The `CONF_CONNECTOR_VER` Makefile variable (default `1.146.0`) controls which ve
 ## Graduation Criteria
 
 ### Alpha
-- [x] API types defined and fully CAPI v1beta2 compliant (typed KCC Go types)
-- [x] All three controllers implemented with typed KCC field access
-- [x] Unit tests for pure functions and GCPKCCManagedCluster reconciler
-- [x] Feature gate (`ConfigConnector=true`) enforced in all controllers
-- [x] KCC CRD presence check in all `SetupWithManager` methods
-- [x] Kubeconfig generation (gke-gcloud-auth-plugin exec credential)
-- [x] `hack/install-config-connector.sh` + Makefile targets
-- [x] Cluster template flavors: simple, ClusterClass, topology
-- [x] ClusterClass fully functional with typed KCC CRD schemas
+- [ ] API types defined and fully CAPI v1beta2 compliant (typed KCC Go types)
+- [ ] All three controllers implemented with typed KCC field access
+- [ ] Reasonable defaults + CAPI field overrides
+- [ ] Unit tests for pure functions, defaults, and reconcilers
+- [ ] Feature gate (`ConfigConnector=true`) enforced in all controllers
+- [ ] KCC CRD presence check in all `SetupWithManager` methods
+- [ ] Kubeconfig generation (gke-gcloud-auth-plugin exec credential)
+- [ ] `hack/install-config-connector.sh` + Makefile targets
+- [ ] Cluster template flavors: simple, ClusterClass, topology
+- [ ] ClusterClass fully functional with typed KCC CRD schemas
 - [ ] User guide written
 - [ ] Feature gate enabled by default: **NO**
 
@@ -752,4 +737,4 @@ type Spec struct {
 | Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | ⚠️ Proposal revised | See above |
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | No UI scope |
 
-**VERDICT:** IMPLEMENTATION COMPLETE — All phases done (API types with typed KCC Go fields, controllers, unit tests, install script, Makefile targets, ClusterClass template flavors). Only user guide remaining before alpha PR. See TODOS.md for current state.
+**VERDICT:** DESIGN COMPLETE — Ready for review. See TODOS.md for implementation phases. No code has been written yet.
