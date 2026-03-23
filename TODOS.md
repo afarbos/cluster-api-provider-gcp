@@ -1,0 +1,93 @@
+# TODOS — Config Connector Integration
+
+Branch: af/featkcc | Updated: 2026-03-23
+See docs/proposals/config-connector-integration.md for full design.
+
+## Implementation approach
+- API types: `runtime.RawExtension` per named field, no KCC Go imports
+- Controllers: parse `runtime.RawExtension` → `*unstructured.Unstructured`, patch with `unstructured.SetNestedField()`
+- No KCC Go module dependency — only KCC CRDs needed at runtime
+
+## Phase 1: Revise API Types ✅ DONE
+
+### CAPI v1beta2 contract fixes
+
+- [x] **GCPKCCManagedCluster**: Add `status.initialization.provisioned` (*bool)
+  Keep `status.ready` as v1beta1 compat shim.
+
+- [x] **GCPKCCManagedControlPlane**: Add `status.initialization.controlPlaneInitialized` (*bool)
+  Add `status.externalManagedControlPlane *bool` (always `true` for GKE).
+  Keep `status.initialized` and `status.ready` as v1beta1 compat shims.
+
+- [x] **GCPKCCMachinePool**: Add `spec.providerIDList []string` (MANDATORY per InfraMachinePool contract).
+  `status.readyReplicas` reflects actual node count, not desired count.
+  Keep `status.ready` as v1beta1 compat shim.
+
+- [x] **All types**: Use `[]metav1.Condition` (v1beta2). No v1beta1 failureReason/failureMessage.
+
+- [x] **CRD labels**: `cluster.x-k8s.io/v1beta2=v1beta2` on all 6 CRDs + templates.
+
+- [x] **Template types**: Created GCPKCCManagedClusterTemplate, GCPKCCManagedControlPlaneTemplate, GCPKCCMachinePoolTemplate.
+
+- [x] **Regenerate**: `make generate` run — 6 CRDs generated, deepcopy generated.
+
+## Phase 2: GCPKCCManagedCluster Controller ✅ DONE
+
+- [x] Feature gate check: `feature.Gates.Enabled(feature.ConfigConnector)` as step 1 of Reconcile()
+- [x] KCC CRD presence check in SetupWithManager (ComputeNetwork + ComputeSubnetwork)
+- [x] `cluster.x-k8s.io/managed-by` skip (externally managed pattern)
+- [x] Pause handling — set Paused condition, return
+- [x] Deletion: check KCC resources are gone before removing finalizer
+- [x] `status.initialization.provisioned` set when both network resources ready
+- [x] v1beta2 conditions: Ready, Paused
+- [x] patchSubnetworkCIDRs: patches secondary IP ranges from Cluster.Spec.ClusterNetwork
+
+## Phase 3: GCPKCCManagedControlPlane Controller ✅ DONE
+
+- [x] Feature gate check, KCC CRD check (ContainerCluster), externally-managed check, pause handling
+- [x] Gate ContainerCluster creation on GCPKCCManagedCluster being provisioned
+- [x] InfrastructureRef kind check before fetching GCPKCCManagedCluster
+- [x] `status.externalManagedControlPlane = true` always set
+- [x] Kubeconfig generation:
+  - Extract CA cert from `containerCluster.status.masterAuth.clusterCaCertificate`
+  - Extract endpoint from `containerCluster.status.endpoint`
+  - Kubeconfig uses `gke-gcloud-auth-plugin` exec credential
+  - Secret: name=`<cluster>-kubeconfig`, type=`cluster.x-k8s.io/secret`, key=`value`
+- [x] `status.initialization.controlPlaneInitialized` set when ready
+- [x] v1beta2 conditions: Available, Paused
+
+## Phase 4: GCPKCCMachinePool Controller ✅ DONE
+
+- [x] Feature gate check, KCC CRD check (ContainerNodePool), pause handling
+- [x] Gate ContainerNodePool creation on GCPKCCManagedControlPlane being initialized
+- [x] `ReadyReplicas` reflects actual node count from workload cluster Nodes
+- [x] `spec.providerIDList` population:
+  - Fetches kubeconfig secret
+  - Builds workload cluster client
+  - Lists Node objects, collects `node.Spec.ProviderID` (format: `gce://<project>/<zone>/<instance>`)
+- [x] `status.initialization.provisioned` set when ready
+- [x] v1beta2 conditions: Ready, Paused
+
+## Phase 5: Fix Tests (blocking alpha PR review)
+
+- [ ] Add unit tests for pure functions:
+  - `patchSubnetworkCIDRs` (no ClusterNetwork, pods CIDR, services CIDR, both)
+  - `isKCCResourceReady` (nil conditions, Ready=True, Ready=False)
+  - `getResourceName` (valid, empty raw, missing name)
+- [ ] Add reconciler unit tests using envtest + fake KCC CRDs:
+  - GCPKCCManagedCluster: create network/subnetwork, readiness gate, delete flow
+  - GCPKCCManagedControlPlane: gate on infra, kubeconfig generation
+  - GCPKCCMachinePool: gate on CP, providerIDList population
+
+## Phase 6: Documentation
+
+- [ ] Update cluster templates to use new API type shapes
+- [ ] Update installation guide
+
+## Future / Beta
+
+- [ ] Event-driven watches on KCC resources (replace 30s polling)
+- [ ] Integration tests (kind + KCC operator)
+- [ ] E2E lifecycle tests
+- [ ] Validation webhooks for inline CC specs
+- [ ] Additional resources: CloudSQL, CloudMemorystore, etc.

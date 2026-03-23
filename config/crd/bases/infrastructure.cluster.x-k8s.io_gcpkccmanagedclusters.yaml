@@ -1,0 +1,237 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  labels:
+    cluster.x-k8s.io/v1beta2: v1beta2
+  name: gcpkccmanagedclusters.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: GCPKCCManagedCluster
+    listKind: GCPKCCManagedClusterList
+    plural: gcpkccmanagedclusters
+    shortNames:
+    - gcpkccmc
+    singular: gcpkccmanagedcluster
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .metadata.labels.cluster\.x-k8s\.io/cluster-name
+      name: Cluster
+      type: string
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .status.networkName
+      name: Network
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          GCPKCCManagedCluster is the Schema for the gcpkccmanagedclusters API.
+          It manages GKE network infrastructure (VPC, subnet) via Config Connector resources.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              GCPKCCManagedClusterSpec defines the desired state of GCPKCCManagedCluster.
+
+              Users provide complete Config Connector resource specifications for the network
+              and subnetwork. CAPG creates those resources and patches the CAPI-derived fields
+              (secondary IP ranges for pods/services) into the subnetwork spec.
+
+              Each Config Connector resource must include the "cnrm.cloud.google.com/project-id"
+              annotation to indicate which GCP project to use.
+            properties:
+              controlPlaneEndpoint:
+                description: |-
+                  ControlPlaneEndpoint represents the endpoint used to communicate with the control plane.
+                  Populated by the GCPKCCManagedControlPlane controller once the GKE cluster endpoint is available.
+                properties:
+                  host:
+                    description: host is the hostname on which the API server is serving.
+                    maxLength: 512
+                    type: string
+                  port:
+                    description: port is the port on which the API server is serving.
+                    format: int32
+                    type: integer
+                required:
+                - host
+                - port
+                type: object
+              network:
+                description: |-
+                  Network is a complete Config Connector ComputeNetwork resource spec.
+                  CAPG creates this resource and manages its lifecycle via owner references.
+
+                  Example:
+                    apiVersion: compute.cnrm.cloud.google.com/v1beta1
+                    kind: ComputeNetwork
+                    metadata:
+                      name: my-network
+                      annotations:
+                        cnrm.cloud.google.com/project-id: "my-gcp-project"
+                    spec:
+                      autoCreateSubnetworks: false
+                      routingMode: REGIONAL
+                type: object
+                x-kubernetes-embedded-resource: true
+                x-kubernetes-preserve-unknown-fields: true
+              subnetwork:
+                description: |-
+                  Subnetwork is a complete Config Connector ComputeSubnetwork resource spec.
+                  CAPG creates this resource and patches the secondaryIpRange field from
+                  Cluster.Spec.ClusterNetwork (pods and services CIDRs).
+
+                  Patched fields:
+                    - spec.secondaryIpRange[pods].ipCidrRange  ← Cluster.Spec.ClusterNetwork.Pods.CIDRBlocks[0]
+                    - spec.secondaryIpRange[services].ipCidrRange ← Cluster.Spec.ClusterNetwork.Services.CIDRBlocks[0]
+
+                  All other fields remain as user-specified.
+                type: object
+                x-kubernetes-embedded-resource: true
+                x-kubernetes-preserve-unknown-fields: true
+            required:
+            - network
+            - subnetwork
+            type: object
+          status:
+            description: GCPKCCManagedClusterStatus defines the observed state of
+              GCPKCCManagedCluster.
+            properties:
+              conditions:
+                description: Conditions represents the latest observations of the
+                  GCPKCCManagedCluster's current state.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              failureDomains:
+                additionalProperties:
+                  description: |-
+                    FailureDomainSpec is the Schema for Cluster API failure domains.
+                    It allows controllers to understand how many failure domains a cluster can optionally span across.
+                  properties:
+                    attributes:
+                      additionalProperties:
+                        type: string
+                      description: attributes is a free form map of attributes an
+                        infrastructure provider might use or require.
+                      type: object
+                    controlPlane:
+                      description: controlPlane determines if this failure domain
+                        is suitable for use by control plane machines.
+                      type: boolean
+                  type: object
+                description: FailureDomains lists the failure domains available for
+                  scheduling.
+                type: object
+              initialization:
+                description: Initialization holds the v1beta2 InfraCluster initialization
+                  status.
+                properties:
+                  provisioned:
+                    description: |-
+                      Provisioned is true when the network infrastructure (ComputeNetwork and ComputeSubnetwork)
+                      are fully provisioned in GCP. This is the v1beta2 replacement for status.ready.
+                    type: boolean
+                type: object
+              networkName:
+                description: NetworkName is the name of the created ComputeNetwork
+                  resource.
+                type: string
+              ready:
+                description: |-
+                  Ready denotes that the cluster network infrastructure is fully provisioned.
+                  This is a v1beta1 compatibility field; prefer Initialization.Provisioned.
+                type: boolean
+              subnetworkName:
+                description: SubnetworkName is the name of the created ComputeSubnetwork
+                  resource.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

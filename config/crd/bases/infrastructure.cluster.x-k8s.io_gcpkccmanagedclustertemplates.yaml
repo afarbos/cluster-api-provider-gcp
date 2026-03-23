@@ -1,0 +1,128 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  labels:
+    cluster.x-k8s.io/v1beta2: v1beta2
+  name: gcpkccmanagedclustertemplates.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: GCPKCCManagedClusterTemplate
+    listKind: GCPKCCManagedClusterTemplateList
+    plural: gcpkccmanagedclustertemplates
+    shortNames:
+    - gcpkccmct
+    singular: gcpkccmanagedclustertemplate
+  scope: Namespaced
+  versions:
+  - name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: GCPKCCManagedClusterTemplate is the Schema for the gcpkccmanagedclustertemplates
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GCPKCCManagedClusterTemplateSpec defines the desired state
+              of GCPKCCManagedClusterTemplate.
+            properties:
+              template:
+                description: GCPKCCManagedClusterTemplateResource describes the data
+                  needed to create a GCPKCCManagedCluster from a template.
+                properties:
+                  spec:
+                    description: |-
+                      GCPKCCManagedClusterSpec defines the desired state of GCPKCCManagedCluster.
+
+                      Users provide complete Config Connector resource specifications for the network
+                      and subnetwork. CAPG creates those resources and patches the CAPI-derived fields
+                      (secondary IP ranges for pods/services) into the subnetwork spec.
+
+                      Each Config Connector resource must include the "cnrm.cloud.google.com/project-id"
+                      annotation to indicate which GCP project to use.
+                    properties:
+                      controlPlaneEndpoint:
+                        description: |-
+                          ControlPlaneEndpoint represents the endpoint used to communicate with the control plane.
+                          Populated by the GCPKCCManagedControlPlane controller once the GKE cluster endpoint is available.
+                        properties:
+                          host:
+                            description: host is the hostname on which the API server
+                              is serving.
+                            maxLength: 512
+                            type: string
+                          port:
+                            description: port is the port on which the API server
+                              is serving.
+                            format: int32
+                            type: integer
+                        required:
+                        - host
+                        - port
+                        type: object
+                      network:
+                        description: |-
+                          Network is a complete Config Connector ComputeNetwork resource spec.
+                          CAPG creates this resource and manages its lifecycle via owner references.
+
+                          Example:
+                            apiVersion: compute.cnrm.cloud.google.com/v1beta1
+                            kind: ComputeNetwork
+                            metadata:
+                              name: my-network
+                              annotations:
+                                cnrm.cloud.google.com/project-id: "my-gcp-project"
+                            spec:
+                              autoCreateSubnetworks: false
+                              routingMode: REGIONAL
+                        type: object
+                        x-kubernetes-embedded-resource: true
+                        x-kubernetes-preserve-unknown-fields: true
+                      subnetwork:
+                        description: |-
+                          Subnetwork is a complete Config Connector ComputeSubnetwork resource spec.
+                          CAPG creates this resource and patches the secondaryIpRange field from
+                          Cluster.Spec.ClusterNetwork (pods and services CIDRs).
+
+                          Patched fields:
+                            - spec.secondaryIpRange[pods].ipCidrRange  ← Cluster.Spec.ClusterNetwork.Pods.CIDRBlocks[0]
+                            - spec.secondaryIpRange[services].ipCidrRange ← Cluster.Spec.ClusterNetwork.Services.CIDRBlocks[0]
+
+                          All other fields remain as user-specified.
+                        type: object
+                        x-kubernetes-embedded-resource: true
+                        x-kubernetes-preserve-unknown-fields: true
+                    required:
+                    - network
+                    - subnetwork
+                    type: object
+                required:
+                - spec
+                type: object
+            required:
+            - template
+            type: object
+        type: object
+    served: true
+    storage: true

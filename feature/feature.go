@@ -30,6 +30,15 @@ const (
 	// owner: @richardchen331 & @richardcase
 	// alpha: v0.1
 	GKE featuregate.Feature = "GKE"
+
+	// ConfigConnector enables Config Connector-based GKE cluster management.
+	// When enabled, CAPG controllers manage GKE clusters by creating and watching
+	// Config Connector resources (ComputeNetwork, ContainerCluster, etc.) rather
+	// than calling the GCP API directly. This unlocks the full GKE API surface.
+	// Config Connector must be installed separately before enabling this gate.
+	// owner: @afarbos
+	// alpha: v0.1
+	ConfigConnector featuregate.Feature = "ConfigConnector"
 )
 
 func init() {
@@ -39,5 +48,6 @@ func init() {
 // defaultCAPGFeatureGates consists of all known capg-specific feature keys.
 // To add a new feature, define a key for it above and add it here.
 var defaultCAPGFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
-	GKE: {Default: false, PreRelease: featuregate.Alpha},
+	GKE:             {Default: false, PreRelease: featuregate.Alpha},
+	ConfigConnector: {Default: false, PreRelease: featuregate.Alpha},
 }

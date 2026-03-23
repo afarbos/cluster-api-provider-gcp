@@ -1,0 +1,123 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  labels:
+    cluster.x-k8s.io/v1beta2: v1beta2
+  name: gcpkccmanagedcontrolplanetemplates.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: GCPKCCManagedControlPlaneTemplate
+    listKind: GCPKCCManagedControlPlaneTemplateList
+    plural: gcpkccmanagedcontrolplanetemplates
+    shortNames:
+    - gcpkccmcpt
+    singular: gcpkccmanagedcontrolplanetemplate
+  scope: Namespaced
+  versions:
+  - name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: GCPKCCManagedControlPlaneTemplate is the Schema for the gcpkccmanagedcontrolplanetemplates
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GCPKCCManagedControlPlaneTemplateSpec defines the desired
+              state of GCPKCCManagedControlPlaneTemplate.
+            properties:
+              template:
+                description: GCPKCCManagedControlPlaneTemplateResource describes the
+                  data needed to create a GCPKCCManagedControlPlane from a template.
+                properties:
+                  machineTemplate:
+                    description: |-
+                      MachineTemplate is required by the CAPI topology contract for control plane providers.
+                      It is intentionally empty as GKE manages the control plane machines externally.
+                    type: object
+                  spec:
+                    description: |-
+                      GCPKCCManagedControlPlaneSpec defines the desired state of GCPKCCManagedControlPlane.
+
+                      Users provide a complete Config Connector ContainerCluster resource specification.
+                      CAPG creates the resource, watches its status, and once the GKE cluster endpoint is
+                      available, generates the kubeconfig secret and marks the control plane initialized.
+
+                      The Config Connector resource must include the "cnrm.cloud.google.com/project-id"
+                      annotation to indicate which GCP project to use.
+                    properties:
+                      cluster:
+                        description: |-
+                          Cluster is a complete Config Connector ContainerCluster resource spec.
+                          CAPG creates this resource and manages its lifecycle via owner references.
+
+                          Example:
+                            apiVersion: container.cnrm.cloud.google.com/v1beta1
+                            kind: ContainerCluster
+                            metadata:
+                              name: my-cluster
+                              annotations:
+                                cnrm.cloud.google.com/project-id: "my-gcp-project"
+                            spec:
+                              location: us-central1
+                              initialNodeCount: 1
+                        type: object
+                        x-kubernetes-embedded-resource: true
+                        x-kubernetes-preserve-unknown-fields: true
+                      controlPlaneEndpoint:
+                        description: |-
+                          ControlPlaneEndpoint represents the endpoint used to communicate with the control plane.
+                          Populated by the controller once the GKE cluster endpoint is available.
+                        properties:
+                          host:
+                            description: host is the hostname on which the API server
+                              is serving.
+                            maxLength: 512
+                            type: string
+                          port:
+                            description: port is the port on which the API server
+                              is serving.
+                            format: int32
+                            type: integer
+                        required:
+                        - host
+                        - port
+                        type: object
+                      version:
+                        description: |-
+                          Version is the Kubernetes version of the GKE cluster (e.g., "1.29").
+                          This is informational; the actual version is set in the ContainerCluster spec.
+                        type: string
+                    required:
+                    - cluster
+                    type: object
+                required:
+                - spec
+                type: object
+            required:
+            - template
+            type: object
+        type: object
+    served: true
+    storage: true
