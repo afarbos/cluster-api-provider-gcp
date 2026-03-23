@@ -50,8 +50,8 @@ See docs/proposals/config-connector-integration.md for full design.
 - [x] InfrastructureRef kind check before fetching GCPKCCManagedCluster
 - [x] `status.externalManagedControlPlane = true` always set
 - [x] Kubeconfig generation:
-  - Extract CA cert from `containerCluster.status.masterAuth.clusterCaCertificate`
-  - Extract endpoint from `containerCluster.status.endpoint`
+  - Extract CA cert from `containerCluster.Status.ObservedState.MasterAuth.ClusterCaCertificate` (typed)
+  - Extract endpoint from `containerCluster.Status.Endpoint` (typed `*string`)
   - Kubeconfig uses `gke-gcloud-auth-plugin` exec credential
   - Secret: name=`<cluster>-kubeconfig`, type=`cluster.x-k8s.io/secret`, key=`value`
 - [x] `status.initialization.controlPlaneInitialized` set when ready
@@ -72,10 +72,8 @@ See docs/proposals/config-connector-integration.md for full design.
 ## Phase 5: Tests ✅ DONE
 
 - [x] Unit tests for pure functions (`gcpkcc_helpers_test.go`):
-  - `rawExtensionToUnstructured`: valid, empty, invalid JSON
-  - `getResourceName`: present, empty raw, missing name
-  - `isKCCResourceReady`: Ready=True/False, no conditions, multi-condition
-  - `patchSubnetworkCIDRs`: no network, pods only, services only, both, update in place
+  - `isKCCConditionTrue`: Ready=True/False, no conditions, absent condition, multi-condition
+  - `patchSubnetworkCIDRs`: no network, pods only, services only, both, update in place (typed `ComputeSubnetwork`)
 - [x] Reconciler tests for GCPKCCManagedCluster (`gcpkccmanagedcluster_controller_test.go`):
   - Feature gate disabled: no-op
   - NotFound: graceful no-op
@@ -87,7 +85,7 @@ See docs/proposals/config-connector-integration.md for full design.
 
 ## Phase 6: Makefile + Installation Script ✅ DONE
 
-- [x] `hack/install-config-connector.sh <version>` — downloads release bundle from GCS, installs CRDs + operator, applies cluster-mode ConfigConnector resource, waits for readiness. Supports `GCPSA_EMAIL` (key-based) and `WORKLOAD_IDENTITY_POOL` (keyless).
+- [x] `hack/install-config-connector.sh <version>` — downloads release bundle from GCS, installs CRDs + operator, creates credentials Secret from `GOOGLE_APPLICATION_CREDENTIALS` JSON key, applies cluster-mode ConfigConnector with `spec.credentialSecretName`, waits for readiness.
 - [x] `CONF_CONNECTOR_VER ?= 1.146.0` variable in Makefile
 - [x] `create-management-cluster-kcc` target — full kind + CAPI + CAPG + KCC
 - [x] `install-config-connector` standalone target
