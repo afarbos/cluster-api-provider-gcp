@@ -399,23 +399,29 @@ The controllers have a natural dependency chain that must be respected:
 
 **Responsibilities:**
 1. Check feature gate, KCC CRDs, pause, externally-managed
-2. Gate on `GCPKCCManagedCluster.status.initialization.provisioned = true`
-3. Create `ContainerCluster` from `spec.cluster` (typed `kcccontainerv1beta1.ContainerCluster`)
-4. Check readiness via typed `isKCCConditionTrue(containerCluster.Status.Conditions, ReadyConditionType)`
-5. Extract endpoint from `containerCluster.Status.Endpoint` (typed `*string`)
-6. Extract CA cert from `containerCluster.Status.ObservedState.MasterAuth.ClusterCaCertificate` (typed)
-7. Generate kubeconfig with `gke-gcloud-auth-plugin` exec credential; write `<cluster>-kubeconfig` secret
-8. Set `status.externalManagedControlPlane = true`, `status.initialization.controlPlaneInitialized`
+2. Add finalizer
+3. Gate on `GCPKCCManagedCluster.status.initialization.provisioned = true`
+4. Create `ContainerCluster` from `spec.cluster` (typed `kcccontainerv1beta1.ContainerCluster`)
+5. Check readiness via typed `isKCCConditionTrue(containerCluster.Status.Conditions, ReadyConditionType)`
+6. Extract endpoint from `containerCluster.Status.Endpoint` (typed `*string`)
+7. Extract CA cert from `containerCluster.Status.ObservedState.MasterAuth.ClusterCaCertificate` (typed)
+8. Generate kubeconfig with `gke-gcloud-auth-plugin` exec credential; write `<cluster>-kubeconfig` secret
+9. Set `status.externalManagedControlPlane = true`, `status.initialization.controlPlaneInitialized`
+
+**Deletion:** Checks ContainerCluster is gone before removing finalizer.
 
 ### GCPKCCMachinePool Controller
 
 **Responsibilities:**
 1. Check feature gate, KCC CRDs, pause
-2. Gate on `GCPKCCManagedControlPlane.status.initialization.controlPlaneInitialized = true`
-3. Create `ContainerNodePool` from `spec.nodePool` (typed `kcccontainerv1beta1.ContainerNodePool`)
-4. Check readiness via typed conditions
-5. When kubeconfig available: list workload cluster `Node` objects to populate `spec.providerIDList`
-6. Set `status.initialization.provisioned`, `status.replicas`, `status.readyReplicas`, conditions
+2. Add finalizer
+3. Gate on `GCPKCCManagedControlPlane.status.initialization.controlPlaneInitialized = true`
+4. Create `ContainerNodePool` from `spec.nodePool` (typed `kcccontainerv1beta1.ContainerNodePool`)
+5. Check readiness via typed conditions
+6. When kubeconfig available: list workload cluster `Node` objects to populate `spec.providerIDList`
+7. Set `status.initialization.provisioned`, `status.replicas`, `status.readyReplicas`, conditions
+
+**Deletion:** Checks ContainerNodePool is gone before removing finalizer.
 
 ### RBAC
 
