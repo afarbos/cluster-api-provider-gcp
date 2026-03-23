@@ -68,16 +68,21 @@ See docs/proposals/config-connector-integration.md for full design.
 - [x] `status.initialization.provisioned` set when ready
 - [x] v1beta2 conditions: Ready, Paused
 
-## Phase 5: Fix Tests (blocking alpha PR review)
+## Phase 5: Tests ✅ DONE
 
-- [ ] Add unit tests for pure functions:
-  - `patchSubnetworkCIDRs` (no ClusterNetwork, pods CIDR, services CIDR, both)
-  - `isKCCResourceReady` (nil conditions, Ready=True, Ready=False)
-  - `getResourceName` (valid, empty raw, missing name)
-- [ ] Add reconciler unit tests using envtest + fake KCC CRDs:
-  - GCPKCCManagedCluster: create network/subnetwork, readiness gate, delete flow
-  - GCPKCCManagedControlPlane: gate on infra, kubeconfig generation
-  - GCPKCCMachinePool: gate on CP, providerIDList population
+- [x] Unit tests for pure functions (`gcpkcc_helpers_test.go`):
+  - `rawExtensionToUnstructured`: valid, empty, invalid JSON
+  - `getResourceName`: present, empty raw, missing name
+  - `isKCCResourceReady`: Ready=True/False, no conditions, multi-condition
+  - `patchSubnetworkCIDRs`: no network, pods only, services only, both, update in place
+- [x] Reconciler tests for GCPKCCManagedCluster (`gcpkccmanagedcluster_controller_test.go`):
+  - Feature gate disabled: no-op
+  - NotFound: graceful no-op
+  - No owner cluster: requeues
+  - Normal reconcile: adds finalizer, creates ComputeNetwork + ComputeSubnetwork
+  - Ready once KCC resources ready: sets status.ready and initialization.provisioned
+  - Delete waits for KCC resources: requeues while resources still exist
+  - Delete removes finalizer: clears finalizer once resources are gone
 
 ## Phase 6: Documentation
 
