@@ -14,6 +14,72 @@ spec:
       apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
       kind: GCPKCCManagedClusterTemplate
       name: ${CLUSTER_NAME}
+  variables:
+  - name: region
+    required: true
+    schema:
+      openAPIV3Schema:
+        type: string
+  - name: machineType
+    required: false
+    schema:
+      openAPIV3Schema:
+        type: string
+        default: e2-medium
+  - name: kubernetesVersion
+    required: true
+    schema:
+      openAPIV3Schema:
+        type: string
+  patches:
+  - name: region
+    definitions:
+    - selector:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: GCPKCCManagedControlPlaneTemplate
+        matchResources:
+          controlPlane: true
+      jsonPatches:
+      - op: replace
+        path: /spec/template/spec/containerCluster/spec/location
+        valueFrom:
+          variable: region
+    - selector:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: GCPKCCManagedClusterTemplate
+        matchResources:
+          infrastructureCluster: true
+      jsonPatches:
+      - op: replace
+        path: /spec/template/spec/subnetwork/spec/region
+        valueFrom:
+          variable: region
+  - name: machineType
+    definitions:
+    - selector:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: GCPKCCManagedMachinePoolTemplate
+        matchResources:
+          machinePoolClass:
+            names:
+            - default-worker
+      jsonPatches:
+      - op: replace
+        path: /spec/template/spec/nodePool/spec/nodeConfig/machineType
+        valueFrom:
+          variable: machineType
+  - name: kubernetesVersion
+    definitions:
+    - selector:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+        kind: GCPKCCManagedControlPlaneTemplate
+        matchResources:
+          controlPlane: true
+      jsonPatches:
+      - op: replace
+        path: /spec/template/spec/version
+        valueFrom:
+          variable: kubernetesVersion
   workers:
     machinePools:
     - class: default-worker

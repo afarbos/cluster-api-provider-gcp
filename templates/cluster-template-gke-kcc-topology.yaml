@@ -12,6 +12,13 @@ spec:
   topology:
     class: "${CLUSTER_CLASS_NAME}"
     version: "${KUBERNETES_VERSION}"
+    variables:
+    - name: region
+      value: "${GCP_REGION}"
+    - name: machineType
+      value: "${GCP_MACHINE_TYPE:=e2-medium}"
+    - name: kubernetesVersion
+      value: "${KUBERNETES_VERSION}"
     controlPlane:
       replicas: 1
     workers:

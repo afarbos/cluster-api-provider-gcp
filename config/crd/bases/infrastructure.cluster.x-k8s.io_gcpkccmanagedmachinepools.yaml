@@ -63,24 +63,15 @@ spec:
               GCPKCCManagedMachinePool.
             properties:
               nodePool:
-                description: NodePool defines the KCC ContainerNodePool resource.
-                properties:
-                  metadata:
-                    description: Metadata for the KCC resource.
-                    type: object
-                  spec:
-                    description: Spec is the desired KCC resource spec, passed through
-                      as raw JSON.
-                    x-kubernetes-preserve-unknown-fields: true
-                type: object
+                description: NodePool defines the KCC ContainerNodePool resource (metadata
+                  + spec as raw JSON).
+                x-kubernetes-preserve-unknown-fields: true
               providerIDList:
                 description: ProviderIDList are the provider IDs of instances in the
                   node pool.
                 items:
                   type: string
                 type: array
-            required:
-            - nodePool
             type: object
           status:
             description: GCPKCCManagedMachinePoolStatus defines the observed state

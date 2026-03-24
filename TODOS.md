@@ -149,6 +149,15 @@ See docs/proposals/config-connector-integration.md for full design.
 - [x] **A7: Kubeconfig with bearer token** — Replaced exec credential with OAuth2 bearer token via `google.DefaultTokenSource` (ADC). New `exp/controllers/gcpkcc_credentials.go`.
 - [x] **A8: Status.replicas from KCC nodeCount** — Set `state-into-spec: merge` annotation. Read `spec.initialNodeCount` from unstructured for `status.replicas`. Documented autoscaler limitation.
 
+## Review Round 2 (Addendum A9-A14)
+
+- [x] **A9: Whole KCC resource as `*runtime.RawExtension`** — Deleted resource wrapper types. Each KCC resource field is a single `*runtime.RawExtension`. Generic `ToUnstructured(raw, gvk)`. Raw metadata helpers added.
+- [x] **A10: Merge readiness check, standard Ready condition** — Merged into `getKCCReadiness(obj) (bool, string)`. Dropped KCC-specific condition types. Standard `ReadyCondition` with descriptive messages.
+- [x] **A11: Defaults take parent objects** — `applyClusterDefaults(kccCluster, cluster)`, `applyControlPlaneDefaults(kccCP, cluster, infraCluster)`, `applyMachinePoolDefaults(kccMMP, machinePool, cp)`. All overrides integrated.
+- [x] **A12: Rename helper, document defer pattern** — `getStatusFieldFromUnstructured`. Defer pattern documented in all 3 controllers.
+- [x] **A13: ClusterClass template patches** — Added variables (region, machineType, kubernetesVersion) and JSON patches. Topology template uses variables.
+- [x] **A14: Nest ConfigConnector under GKE gate** — ConfigConnector inside GKE gate. MachinePool controller under MachinePool gate.
+
 ---
 
 ## Design Decisions

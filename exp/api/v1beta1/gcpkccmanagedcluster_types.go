@@ -18,6 +18,7 @@ package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 )
 
@@ -28,11 +29,17 @@ const (
 
 // GCPKCCManagedClusterSpec defines the desired state of GCPKCCManagedCluster.
 type GCPKCCManagedClusterSpec struct {
-	// Network defines the KCC ComputeNetwork resource.
-	Network GCPKCCNetworkResource `json:"network"`
+	// Network defines the KCC ComputeNetwork resource (metadata + spec as raw JSON).
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Network *runtime.RawExtension `json:"network,omitempty"`
 
-	// Subnetwork defines the KCC ComputeSubnetwork resource.
-	Subnetwork GCPKCCSubnetworkResource `json:"subnetwork"`
+	// Subnetwork defines the KCC ComputeSubnetwork resource (metadata + spec as raw JSON).
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Subnetwork *runtime.RawExtension `json:"subnetwork,omitempty"`
 
 	// ControlPlaneEndpoint represents the endpoint used to communicate with the control plane.
 	// +optional

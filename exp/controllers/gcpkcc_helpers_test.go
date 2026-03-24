@@ -40,89 +40,83 @@ func makeKCCResource(conditions []map[string]interface{}) *unstructured.Unstruct
 	return obj
 }
 
-func TestIsKCCResourceReady(t *testing.T) {
+func TestGetKCCReadiness(t *testing.T) {
 	tests := []struct {
-		name string
-		obj  *unstructured.Unstructured
-		want bool
+		name    string
+		obj     *unstructured.Unstructured
+		ready   bool
+		message string
 	}{
 		{
-			name: "ready",
+			name: "ready with message",
+			obj: makeKCCResource([]map[string]interface{}{
+				{"type": "Ready", "status": "True", "message": "All good"},
+			}),
+			ready:   true,
+			message: "All good",
+		},
+		{
+			name: "ready without message",
 			obj: makeKCCResource([]map[string]interface{}{
 				{"type": "Ready", "status": "True"},
 			}),
-			want: true,
+			ready:   true,
+			message: "",
 		},
 		{
-			name: "not ready",
+			name: "not ready with message",
+			obj: makeKCCResource([]map[string]interface{}{
+				{"type": "Ready", "status": "False", "message": "Provisioning"},
+			}),
+			ready:   false,
+			message: "Provisioning",
+		},
+		{
+			name: "not ready without message",
 			obj: makeKCCResource([]map[string]interface{}{
 				{"type": "Ready", "status": "False"},
 			}),
-			want: false,
+			ready:   false,
+			message: "",
 		},
 		{
-			name: "no conditions",
-			obj:  makeKCCResource([]map[string]interface{}{}),
-			want: false,
+			name:    "no conditions",
+			obj:     makeKCCResource([]map[string]interface{}{}),
+			ready:   false,
+			message: "",
 		},
 		{
 			name: "no status",
 			obj: &unstructured.Unstructured{
 				Object: map[string]interface{}{},
 			},
-			want: false,
+			ready:   false,
+			message: "",
+		},
+		{
+			name:    "nil object",
+			obj:     nil,
+			ready:   false,
+			message: "",
 		},
 		{
 			name: "wrong condition type",
 			obj: makeKCCResource([]map[string]interface{}{
 				{"type": "Available", "status": "True"},
 			}),
-			want: false,
+			ready:   false,
+			message: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isKCCResourceReady(tt.obj)
-			if got != tt.want {
-				t.Errorf("isKCCResourceReady() = %v, want %v", got, tt.want)
+			gotReady, gotMsg := getKCCReadiness(tt.obj)
+			if gotReady != tt.ready {
+				t.Errorf("getKCCReadiness() ready = %v, want %v", gotReady, tt.ready)
 			}
-		})
-	}
-}
-
-func TestGetKCCConditionMessage(t *testing.T) {
-	tests := []struct {
-		name string
-		obj  *unstructured.Unstructured
-		want string
-	}{
-		{
-			name: "has message",
-			obj: makeKCCResource([]map[string]interface{}{
-				{"type": "Ready", "status": "True", "message": "Ready"},
-			}),
-			want: "Ready",
-		},
-		{
-			name: "no message",
-			obj: makeKCCResource([]map[string]interface{}{
-				{"type": "Ready", "status": "False"},
-			}),
-			want: "",
-		},
-		{
-			name: "no ready condition",
-			obj:  makeKCCResource([]map[string]interface{}{}),
-			want: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := getKCCConditionMessage(tt.obj)
-			if got != tt.want {
-				t.Errorf("getKCCConditionMessage() = %q, want %q", got, tt.want)
+			if gotMsg != tt.message {
+				t.Errorf("getKCCReadiness() message = %q, want %q", gotMsg, tt.message)
 			}
 		})
 	}
@@ -179,12 +173,12 @@ func TestGetKCCStatusField(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotVal, gotFound := getKCCStatusField(tt.obj, tt.fields...)
+			gotVal, gotFound := getStatusFieldFromUnstructured(tt.obj, tt.fields...)
 			if gotVal != tt.wantVal {
-				t.Errorf("getKCCStatusField() value = %q, want %q", gotVal, tt.wantVal)
+				t.Errorf("getStatusFieldFromUnstructured() value = %q, want %q", gotVal, tt.wantVal)
 			}
 			if gotFound != tt.wantFound {
-				t.Errorf("getKCCStatusField() found = %v, want %v", gotFound, tt.wantFound)
+				t.Errorf("getStatusFieldFromUnstructured() found = %v, want %v", gotFound, tt.wantFound)
 			}
 		})
 	}

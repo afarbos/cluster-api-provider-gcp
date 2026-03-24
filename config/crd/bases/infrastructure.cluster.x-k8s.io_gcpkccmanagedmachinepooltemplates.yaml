@@ -54,18 +54,7 @@ spec:
                       the desired state of GCPKCCManagedMachinePool for use in a template.
                     properties:
                       nodePool:
-                        description: NodePool defines the KCC ContainerNodePool resource.
-                        properties:
-                          metadata:
-                            description: Metadata for the KCC resource.
-                            type: object
-                          spec:
-                            description: Spec is the desired KCC resource spec, passed
-                              through as raw JSON.
-                            x-kubernetes-preserve-unknown-fields: true
-                        type: object
-                    required:
-                    - nodePool
+                        x-kubernetes-preserve-unknown-fields: true
                     type: object
                 required:
                 - spec

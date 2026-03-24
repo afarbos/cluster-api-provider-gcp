@@ -35,56 +35,20 @@ const (
 	kccReconciliationTimeout = 30 * time.Minute
 )
 
-
-// isKCCResourceReady checks whether a KCC unstructured resource has a Ready
-// condition with status "True".
-func isKCCResourceReady(obj *unstructured.Unstructured) bool {
+// getKCCReadiness checks whether a KCC unstructured resource has a Ready
+// condition with status "True" and returns (ready, message).
+func getKCCReadiness(obj *unstructured.Unstructured) (bool, string) {
 	if obj == nil {
-		return false
+		return false, ""
 	}
-
 	status, ok := obj.Object["status"].(map[string]interface{})
 	if !ok {
-		return false
+		return false, ""
 	}
-
 	conditions, ok := status["conditions"].([]interface{})
 	if !ok {
-		return false
+		return false, ""
 	}
-
-	for _, c := range conditions {
-		cond, ok := c.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if condType, _ := cond["type"].(string); condType == "Ready" {
-			if condStatus, _ := cond["status"].(string); condStatus == "True" {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-// getKCCConditionMessage returns the message from the Ready condition of a KCC
-// unstructured resource. Returns an empty string if the condition is not found.
-func getKCCConditionMessage(obj *unstructured.Unstructured) string {
-	if obj == nil {
-		return ""
-	}
-
-	status, ok := obj.Object["status"].(map[string]interface{})
-	if !ok {
-		return ""
-	}
-
-	conditions, ok := status["conditions"].([]interface{})
-	if !ok {
-		return ""
-	}
-
 	for _, c := range conditions {
 		cond, ok := c.(map[string]interface{})
 		if !ok {
@@ -92,17 +56,19 @@ func getKCCConditionMessage(obj *unstructured.Unstructured) string {
 		}
 		if condType, _ := cond["type"].(string); condType == "Ready" {
 			msg, _ := cond["message"].(string)
-			return msg
+			if condStatus, _ := cond["status"].(string); condStatus == "True" {
+				return true, msg
+			}
+			return false, msg
 		}
 	}
-
-	return ""
+	return false, ""
 }
 
-// getKCCStatusField extracts a nested string field from the status of a KCC
+// getStatusFieldFromUnstructured extracts a nested string field from the status of a KCC
 // unstructured resource. The fields parameter specifies the path relative to
 // status (e.g., "observedState", "endpoint").
-func getKCCStatusField(obj *unstructured.Unstructured, fields ...string) (string, bool) {
+func getStatusFieldFromUnstructured(obj *unstructured.Unstructured, fields ...string) (string, bool) {
 	val, found, err := unstructured.NestedString(obj.Object, append([]string{"status"}, fields...)...)
 	if err != nil || !found {
 		return "", false

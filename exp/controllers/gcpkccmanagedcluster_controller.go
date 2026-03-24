@@ -90,7 +90,9 @@ func (r *GCPKCCManagedClusterReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, nil
 	}
 
-	// 4. Defer status patch.
+	// 4. Defer status patch — captures a snapshot now and patches only the diff
+	// at the end of reconciliation, ensuring status is always updated regardless
+	// of which code path returns (success, error, or early exit).
 	patchBase := client.MergeFrom(kccCluster.DeepCopy())
 	defer func() {
 		if err := r.Status().Patch(ctx, kccCluster, patchBase); err != nil && reterr == nil {
@@ -216,44 +218,29 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 		}
 	}
 
-	// 3. Apply defaults.
-	if err := applyNetworkDefaults(&kccCluster.Spec.Network, cluster.Name, kccCluster.Namespace); err != nil {
-		return ctrl.Result{}, fmt.Errorf("applying network defaults: %w", err)
-	}
-	if err := applySubnetworkDefaults(&kccCluster.Spec.Subnetwork, cluster.Name, kccCluster.Spec.Network.Metadata.Name, kccCluster.Namespace); err != nil {
-		return ctrl.Result{}, fmt.Errorf("applying subnetwork defaults: %w", err)
+	// 3. Apply defaults and CAPI overrides.
+	if err := applyClusterDefaults(kccCluster, cluster); err != nil {
+		return ctrl.Result{}, fmt.Errorf("applying defaults: %w", err)
 	}
 
-	// 4. Apply CIDR overrides from Cluster.Spec.ClusterNetwork.
-	var podCIDR, serviceCIDR string
-	if len(cluster.Spec.ClusterNetwork.Pods.CIDRBlocks) > 0 {
-		podCIDR = cluster.Spec.ClusterNetwork.Pods.CIDRBlocks[0]
-	}
-	if len(cluster.Spec.ClusterNetwork.Services.CIDRBlocks) > 0 {
-		serviceCIDR = cluster.Spec.ClusterNetwork.Services.CIDRBlocks[0]
-	}
-	if err := applySubnetworkCIDROverrides(&kccCluster.Spec.Subnetwork, podCIDR, serviceCIDR); err != nil {
-		return ctrl.Result{}, fmt.Errorf("applying CIDR overrides: %w", err)
-	}
-
-	// 5. Convert to unstructured KCC resources.
+	// 4. Convert to unstructured KCC resources.
 	kccClusterGVK := schema.GroupVersionKind{
 		Group:   infrav1exp.GroupVersion.Group,
 		Version: infrav1exp.GroupVersion.Version,
 		Kind:    "GCPKCCManagedCluster",
 	}
 
-	networkU, err := infrav1exp.ToUnstructuredComputeNetwork(kccCluster.Spec.Network, kccCluster.Namespace)
+	networkU, err := infrav1exp.ToUnstructured(kccCluster.Spec.Network, infrav1exp.ComputeNetworkGVK)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("converting network to unstructured: %w", err)
 	}
 
-	subnetworkU, err := infrav1exp.ToUnstructuredComputeSubnetwork(kccCluster.Spec.Subnetwork, kccCluster.Namespace)
+	subnetworkU, err := infrav1exp.ToUnstructured(kccCluster.Spec.Subnetwork, infrav1exp.ComputeSubnetworkGVK)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("converting subnetwork to unstructured: %w", err)
 	}
 
-	// 6. Set owner references.
+	// 5. Set owner references.
 	if err := setKCCOwnerReference(kccCluster, kccClusterGVK, networkU); err != nil {
 		return ctrl.Result{}, fmt.Errorf("setting network owner reference: %w", err)
 	}
@@ -261,7 +248,7 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 		return ctrl.Result{}, fmt.Errorf("setting subnetwork owner reference: %w", err)
 	}
 
-	// 7. Create or patch KCC resources.
+	// 6. Create or patch KCC resources.
 	if err := createOrPatchKCCResource(ctx, r.Client, networkU); err != nil {
 		return ctrl.Result{}, fmt.Errorf("creating/patching KCC ComputeNetwork: %w", err)
 	}
@@ -269,41 +256,36 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 		return ctrl.Result{}, fmt.Errorf("creating/patching KCC ComputeSubnetwork: %w", err)
 	}
 
-	// 8. Check readiness of KCC resources.
+	// 7. Check readiness of KCC resources.
 	existingNetwork := &unstructured.Unstructured{}
 	existingNetwork.SetGroupVersionKind(infrav1exp.ComputeNetworkGVK)
-	if err := r.Get(ctx, types.NamespacedName{Name: kccCluster.Spec.Network.Metadata.Name, Namespace: kccCluster.Namespace}, existingNetwork); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: networkU.GetName(), Namespace: kccCluster.Namespace}, existingNetwork); err != nil {
 		return ctrl.Result{}, fmt.Errorf("getting KCC ComputeNetwork: %w", err)
 	}
-	networkReady := isKCCResourceReady(existingNetwork)
 
 	existingSubnetwork := &unstructured.Unstructured{}
 	existingSubnetwork.SetGroupVersionKind(infrav1exp.ComputeSubnetworkGVK)
-	if err := r.Get(ctx, types.NamespacedName{Name: kccCluster.Spec.Subnetwork.Metadata.Name, Namespace: kccCluster.Namespace}, existingSubnetwork); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: subnetworkU.GetName(), Namespace: kccCluster.Namespace}, existingSubnetwork); err != nil {
 		return ctrl.Result{}, fmt.Errorf("getting KCC ComputeSubnetwork: %w", err)
 	}
-	subnetworkReady := isKCCResourceReady(existingSubnetwork)
 
-	// 9. Update status based on readiness.
+	networkReady, networkMsg := getKCCReadiness(existingNetwork)
+	subnetworkReady, subnetworkMsg := getKCCReadiness(existingSubnetwork)
+
+	// 8. Update status based on readiness.
 	if networkReady && subnetworkReady {
 		kccCluster.Status.Ready = true
 		kccCluster.Status.Initialization = &infrav1exp.GCPKCCManagedClusterInitializationStatus{
 			Provisioned: ptr.To(true),
 		}
-		kccCluster.Status.NetworkName = kccCluster.Spec.Network.Metadata.Name
-		kccCluster.Status.SubnetworkName = kccCluster.Spec.Subnetwork.Metadata.Name
+		kccCluster.Status.NetworkName = networkU.GetName()
+		kccCluster.Status.SubnetworkName = subnetworkU.GetName()
 
 		apimeta.SetStatusCondition(&kccCluster.Status.Conditions, metav1.Condition{
-			Type:               infrav1exp.KCCNetworkReadyCondition,
-			Status:             metav1.ConditionTrue,
-			Reason:             clusterv1.ReadyReason,
-			LastTransitionTime: metav1.Now(),
-		})
-		apimeta.SetStatusCondition(&kccCluster.Status.Conditions, metav1.Condition{
-			Type:               infrav1exp.KCCSubnetworkReadyCondition,
-			Status:             metav1.ConditionTrue,
-			Reason:             clusterv1.ReadyReason,
-			LastTransitionTime: metav1.Now(),
+			Type:    infrav1exp.ReadyCondition,
+			Status:  metav1.ConditionTrue,
+			Reason:  clusterv1.ReadyReason,
+			Message: "KCC network resources are ready",
 		})
 
 		// Propagate endpoint from control plane if available.
@@ -315,33 +297,19 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 		return ctrl.Result{}, nil
 	}
 
-	// 10. Not ready: set conditions with KCC messages and requeue.
-	if !networkReady {
-		msg := getKCCConditionMessage(existingNetwork)
-		if msg == "" {
-			msg = "KCC ComputeNetwork is not yet ready"
-		}
-		apimeta.SetStatusCondition(&kccCluster.Status.Conditions, metav1.Condition{
-			Type:               infrav1exp.KCCNetworkReadyCondition,
-			Status:             metav1.ConditionFalse,
-			Reason:             clusterv1.NotReadyReason,
-			Message:            msg,
-			LastTransitionTime: metav1.Now(),
-		})
+	// 9. Not ready: set condition with KCC message and requeue.
+	msg := "Waiting for KCC resources"
+	if !networkReady && networkMsg != "" {
+		msg = fmt.Sprintf("KCC ComputeNetwork: %s", networkMsg)
+	} else if !subnetworkReady && subnetworkMsg != "" {
+		msg = fmt.Sprintf("KCC ComputeSubnetwork: %s", subnetworkMsg)
 	}
-	if !subnetworkReady {
-		msg := getKCCConditionMessage(existingSubnetwork)
-		if msg == "" {
-			msg = "KCC ComputeSubnetwork is not yet ready"
-		}
-		apimeta.SetStatusCondition(&kccCluster.Status.Conditions, metav1.Condition{
-			Type:               infrav1exp.KCCSubnetworkReadyCondition,
-			Status:             metav1.ConditionFalse,
-			Reason:             clusterv1.NotReadyReason,
-			Message:            msg,
-			LastTransitionTime: metav1.Now(),
-		})
-	}
+	apimeta.SetStatusCondition(&kccCluster.Status.Conditions, metav1.Condition{
+		Type:    infrav1exp.ReadyCondition,
+		Status:  metav1.ConditionFalse,
+		Reason:  clusterv1.NotReadyReason,
+		Message: msg,
+	})
 
 	log.Info("KCC resources not yet ready, requeueing", "networkReady", networkReady, "subnetworkReady", subnetworkReady)
 	return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
@@ -352,13 +320,13 @@ func (r *GCPKCCManagedClusterReconciler) reconcileDelete(ctx context.Context, kc
 	log.Info("Reconciling Delete GCPKCCManagedCluster")
 
 	// Delete KCC ComputeSubnetwork (delete subnet before network).
-	subnetworkGone, err := deleteResource(ctx, r.Client, infrav1exp.ComputeSubnetworkGVK, kccCluster.Spec.Subnetwork.Metadata.Name, kccCluster.Namespace)
+	subnetworkGone, err := deleteResource(ctx, r.Client, infrav1exp.ComputeSubnetworkGVK, getRawName(kccCluster.Spec.Subnetwork), kccCluster.Namespace)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("deleting KCC ComputeSubnetwork: %w", err)
 	}
 
 	// Delete KCC ComputeNetwork.
-	networkGone, err := deleteResource(ctx, r.Client, infrav1exp.ComputeNetworkGVK, kccCluster.Spec.Network.Metadata.Name, kccCluster.Namespace)
+	networkGone, err := deleteResource(ctx, r.Client, infrav1exp.ComputeNetworkGVK, getRawName(kccCluster.Spec.Network), kccCluster.Namespace)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("deleting KCC ComputeNetwork: %w", err)
 	}

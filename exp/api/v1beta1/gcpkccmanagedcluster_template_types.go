@@ -18,6 +18,7 @@ package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // GCPKCCManagedClusterTemplateSpec defines the desired state of GCPKCCManagedClusterTemplate.
@@ -57,9 +58,13 @@ type GCPKCCManagedClusterTemplateResource struct {
 
 // GCPKCCManagedClusterTemplateResourceSpec defines the desired state of GCPKCCManagedCluster for use in a template.
 type GCPKCCManagedClusterTemplateResourceSpec struct {
-	// Network defines the KCC ComputeNetwork resource.
-	Network GCPKCCNetworkResource `json:"network"`
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Network *runtime.RawExtension `json:"network,omitempty"`
 
-	// Subnetwork defines the KCC ComputeSubnetwork resource.
-	Subnetwork GCPKCCSubnetworkResource `json:"subnetwork"`
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	Subnetwork *runtime.RawExtension `json:"subnetwork,omitempty"`
 }

@@ -936,3 +936,92 @@ This avoids the full scope pattern while reusing the proven token generation flo
 **Limitation (document):** With autoscaling enabled, `initialNodeCount` may not reflect the actual current node count. This is a known KCC limitation. For accurate counts with autoscaling, a future enhancement could read instance group sizes via the GCP Compute API.
 
 **Files:** `exp/controllers/gcpkccmanagedmachinepool_controller.go`, `exp/controllers/gcpkcc_defaults.go` or `gcpkcc_conversion.go` (for the annotation).
+
+### A9. Whole KCC resource as `*runtime.RawExtension`
+
+**Problem:** A2 kept `Metadata metav1.ObjectMeta` typed while making `Spec *runtime.RawExtension`. This splits the KCC resource across two fields and requires a `namespace` parameter in `ToUnstructured*` functions even though defaults already set `Metadata.Namespace`.
+
+**Change:** Make each KCC resource field a single `*runtime.RawExtension` containing the full Kubernetes-style object (`metadata` + `spec`). The resource wrapper types (`GCPKCCNetworkResource`, etc.) are deleted. Parent spec types become:
+
+```go
+type GCPKCCManagedClusterSpec struct {
+    // +optional
+    // +kubebuilder:pruning:PreserveUnknownFields
+    // +kubebuilder:validation:Schemaless
+    Network *runtime.RawExtension `json:"network,omitempty"`
+    // ...same for Subnetwork
+}
+```
+
+Replace the 4 specific `ToUnstructured*` functions with a single generic:
+```go
+func ToUnstructured(raw *runtime.RawExtension, gvk schema.GroupVersionKind) (*unstructured.Unstructured, error)
+```
+
+Add raw metadata helpers (`getRawMetadataName`, `setRawMetadataName`, `getRawAnnotations`, etc.) for defaults to use.
+
+**Files:** `exp/api/v1beta1/gcpkcc_types.go`, `exp/api/v1beta1/gcpkcc_conversion.go`, all controllers, defaults, template types, tests.
+
+### A10. Merge readiness check, use standard Ready condition
+
+**Problem:** `isKCCResourceReady` and `getKCCConditionMessage` are always called together. Four custom condition types (`KCCNetworkReadyCondition`, etc.) are unnecessary — the CAPI contract only requires a single `Ready` condition with descriptive messages.
+
+**Change:**
+1. Merge into `getKCCReadiness(obj) (ready bool, message string)`
+2. Drop `KCCNetworkReadyCondition`, `KCCSubnetworkReadyCondition`, `KCCClusterReadyCondition`, `KCCNodePoolReadyCondition`
+3. Use standard `"Ready"` condition type with messages like "KCC ComputeNetwork is ready" or "Waiting for KCC ContainerCluster: <kcc-message>"
+4. Keep `status.ready` bool field for v1beta1 compat per CAPI contract
+
+**Files:** `exp/api/v1beta1/gcpkcc_conditions.go`, `exp/controllers/gcpkcc_helpers.go`, all 3 controllers.
+
+### A11. Defaults take parent objects
+
+**Problem:** `applyContainerClusterDefaults` takes 6 string parameters. Verbose and error-prone.
+
+**Change:** Replace per-resource standalone functions with per-controller functions taking parent objects:
+```go
+func applyClusterDefaults(kccCluster *infrav1exp.GCPKCCManagedCluster, cluster *clusterv1.Cluster) error
+func applyControlPlaneDefaults(kccCP *infrav1exp.GCPKCCManagedControlPlane, cluster *clusterv1.Cluster, infraCluster *infrav1exp.GCPKCCManagedCluster) error
+func applyMachinePoolDefaults(kccMMP *infrav1exp.GCPKCCManagedMachinePool, machinePool *clusterv1.MachinePool, controlPlane *infrav1exp.GCPKCCManagedControlPlane) error
+```
+
+Override functions are integrated into the same functions (defaults + overrides in one pass).
+
+**Files:** `exp/controllers/gcpkcc_defaults.go`, all 3 controllers, tests.
+
+### A12. Rename helper, document defer pattern
+
+**Problem:** `getKCCStatusField` is generic but has KCC prefix. The defer status patch pattern is not documented.
+
+**Change:**
+1. Rename `getKCCStatusField` → `getStatusFieldFromUnstructured`
+2. Add comment explaining the defer status patch pattern in all 3 controllers
+
+**Files:** `exp/controllers/gcpkcc_helpers.go`, `exp/controllers/gcpkccmanagedcontrolplane_controller.go`.
+
+### A13. ClusterClass template: add variables and JSON patches
+
+**Problem:** `cluster-template-gke-kcc-clusterclass.yaml` defines a ClusterClass but has no `variables` or `patches` sections. Without patches, topology variables (region, machineType, replicas) cannot be plumbed through.
+
+**Change:** Add variables (`region`, `machineType`, `kubernetesVersion`) and JSON patches to the ClusterClass definition targeting the template specs.
+
+**Files:** `templates/cluster-template-gke-kcc-clusterclass.yaml`, `templates/cluster-template-gke-kcc-topology.yaml`.
+
+### A14. Nest ConfigConnector under GKE feature gate
+
+**Problem:** `ConfigConnector` is a standalone feature gate but semantically depends on GKE. The MachinePool controller should also require the `MachinePool` feature gate.
+
+**Change:** Nest `ConfigConnector` check inside the `GKE` gate. Nest `GCPKCCManagedMachinePoolReconciler` inside an additional `MachinePool` gate check:
+```go
+if feature.Gates.Enabled(feature.GKE) {
+    // ...existing GKE controllers...
+    if feature.Gates.Enabled(feature.ConfigConnector) {
+        // KCCManagedCluster, KCCManagedControlPlane
+        if feature.Gates.Enabled(capifeature.MachinePool) {
+            // KCCManagedMachinePool
+        }
+    }
+}
+```
+
+**Files:** `main.go`.

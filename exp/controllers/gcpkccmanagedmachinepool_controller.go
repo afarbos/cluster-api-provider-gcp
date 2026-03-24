@@ -104,7 +104,9 @@ func (r *GCPKCCManagedMachinePoolReconciler) Reconcile(ctx context.Context, req 
 		return ctrl.Result{}, nil
 	}
 
-	// 5. Defer status patch.
+	// 5. Defer status patch — captures a snapshot now and patches only the diff
+	// at the end of reconciliation, ensuring status is always updated regardless
+	// of which code path returns (success, error, or early exit).
 	patchBase := client.MergeFrom(kccMMP.DeepCopy())
 	defer func() {
 		if err := r.Status().Patch(ctx, kccMMP, patchBase); err != nil && reterr == nil {
@@ -263,46 +265,26 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 	if kccCP.Status.Initialization == nil || kccCP.Status.Initialization.ControlPlaneInitialized == nil || !*kccCP.Status.Initialization.ControlPlaneInitialized {
 		log.Info("Waiting for control plane to be initialized")
 		apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
-			Type:               infrav1exp.KCCNodePoolReadyCondition,
-			Status:             metav1.ConditionFalse,
-			Reason:             clusterv1.WaitingForControlPlaneInitializedReason,
-			Message:            "Waiting for control plane to be initialized",
-			LastTransitionTime: metav1.Now(),
+			Type:    infrav1exp.ReadyCondition,
+			Status:  metav1.ConditionFalse,
+			Reason:  clusterv1.WaitingForControlPlaneInitializedReason,
+			Message: "Waiting for control plane to be initialized",
 		})
 		return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
 	}
 
-	// 3. Apply defaults.
-	if err := applyContainerNodePoolDefaults(
-		&kccMMP.Spec.NodePool,
-		kccMMP.Name,
-		kccCP.Status.ClusterName,
-		getSpecString(kccCP.Spec.ContainerCluster.Spec, "location"),
-		kccMMP.Namespace,
-	); err != nil {
-		return ctrl.Result{}, fmt.Errorf("applying nodepool defaults: %w", err)
+	// 3. Apply defaults and CAPI overrides.
+	if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP); err != nil {
+		return ctrl.Result{}, fmt.Errorf("applying defaults: %w", err)
 	}
 
-	// 4. Apply overrides from MachinePool.
-	if err := applyNodePoolReplicasOverride(&kccMMP.Spec.NodePool, machinePool.Spec.Replicas); err != nil {
-		return ctrl.Result{}, fmt.Errorf("applying replicas override: %w", err)
-	}
-	if machinePool.Spec.Template.Spec.Version != "" {
-		if err := applyNodePoolVersionOverride(&kccMMP.Spec.NodePool, machinePool.Spec.Template.Spec.Version); err != nil {
-			return ctrl.Result{}, fmt.Errorf("applying version override: %w", err)
-		}
-	}
-	if err := applyNodePoolFailureDomainOverride(&kccMMP.Spec.NodePool, machinePool.Spec.FailureDomains); err != nil {
-		return ctrl.Result{}, fmt.Errorf("applying failure domain override: %w", err)
-	}
-
-	// 5. Convert to unstructured ContainerNodePool.
-	containerNodePoolU, err := infrav1exp.ToUnstructuredContainerNodePool(kccMMP.Spec.NodePool, kccMMP.Namespace)
+	// 4. Convert to unstructured ContainerNodePool.
+	containerNodePoolU, err := infrav1exp.ToUnstructured(kccMMP.Spec.NodePool, infrav1exp.ContainerNodePoolGVK)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("converting ContainerNodePool to unstructured: %w", err)
 	}
 
-	// 6. Set owner ref, create or patch.
+	// 5. Set owner ref, create or patch.
 	kccMMPGVK := schema.GroupVersionKind{
 		Group:   infrav1exp.GroupVersion.Group,
 		Version: infrav1exp.GroupVersion.Version,
@@ -316,24 +298,26 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 		return ctrl.Result{}, fmt.Errorf("creating/patching KCC ContainerNodePool: %w", err)
 	}
 
-	// 7. Check readiness.
+	// 6. Check readiness.
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(infrav1exp.ContainerNodePoolGVK)
-	if err := r.Get(ctx, types.NamespacedName{Name: kccMMP.Spec.NodePool.Metadata.Name, Namespace: kccMMP.Namespace}, existing); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: containerNodePoolU.GetName(), Namespace: kccMMP.Namespace}, existing); err != nil {
 		return ctrl.Result{}, fmt.Errorf("getting KCC ContainerNodePool: %w", err)
 	}
 
-	// 8. If ready, set status fields.
-	if isKCCResourceReady(existing) {
+	ready, readyMsg := getKCCReadiness(existing)
+
+	// 7. If ready, set status fields.
+	if ready {
 		kccMMP.Status.Ready = true
 		kccMMP.Status.Initialization = &infrav1exp.GCPKCCManagedMachinePoolInitializationStatus{
 			Provisioned: ptr.To(true),
 		}
-		kccMMP.Status.NodePoolName = kccMMP.Spec.NodePool.Metadata.Name
+		kccMMP.Status.NodePoolName = containerNodePoolU.GetName()
 		// Read actual node count from KCC resource (populated via
 		// cnrm.cloud.google.com/state-into-spec: merge annotation).
 		// NOTE: With autoscaling enabled, initialNodeCount may not reflect
-		// the current node count immediately — there is a delay between
+		// the current node count immediately -- there is a delay between
 		// the autoscaler scaling event and the KCC status update.
 		nodeCount, found, _ := unstructured.NestedInt64(existing.Object, "spec", "initialNodeCount")
 		if found {
@@ -341,27 +325,26 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 		}
 
 		apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
-			Type:               infrav1exp.KCCNodePoolReadyCondition,
-			Status:             metav1.ConditionTrue,
-			Reason:             clusterv1.ReadyReason,
-			LastTransitionTime: metav1.Now(),
+			Type:    infrav1exp.ReadyCondition,
+			Status:  metav1.ConditionTrue,
+			Reason:  clusterv1.ReadyReason,
+			Message: "KCC ContainerNodePool is ready",
 		})
 
 		log.Info("GCPKCCManagedMachinePool is ready")
 		return ctrl.Result{}, nil
 	}
 
-	// 9. Not ready: requeue.
-	msg := getKCCConditionMessage(existing)
+	// 8. Not ready: requeue.
+	msg := readyMsg
 	if msg == "" {
 		msg = "KCC ContainerNodePool is not yet ready"
 	}
 	apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
-		Type:               infrav1exp.KCCNodePoolReadyCondition,
-		Status:             metav1.ConditionFalse,
-		Reason:             clusterv1.NotReadyReason,
-		Message:            msg,
-		LastTransitionTime: metav1.Now(),
+		Type:    infrav1exp.ReadyCondition,
+		Status:  metav1.ConditionFalse,
+		Reason:  clusterv1.NotReadyReason,
+		Message: msg,
 	})
 
 	log.Info("KCC ContainerNodePool not yet ready, requeueing")
@@ -373,7 +356,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileDelete(ctx context.Context
 	log.Info("Reconciling Delete GCPKCCManagedMachinePool")
 
 	// 1. Delete the ContainerNodePool KCC resource.
-	gone, err := deleteResource(ctx, r.Client, infrav1exp.ContainerNodePoolGVK, kccMMP.Spec.NodePool.Metadata.Name, kccMMP.Namespace)
+	gone, err := deleteResource(ctx, r.Client, infrav1exp.ContainerNodePoolGVK, getRawName(kccMMP.Spec.NodePool), kccMMP.Namespace)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("deleting KCC ContainerNodePool: %w", err)
 	}

@@ -97,7 +97,9 @@ func (r *GCPKCCManagedControlPlaneReconciler) Reconcile(ctx context.Context, req
 		return ctrl.Result{}, nil
 	}
 
-	// 4. Defer status patch.
+	// 4. Defer status patch — captures a snapshot now and patches only the diff
+	// at the end of reconciliation, ensuring status is always updated regardless
+	// of which code path returns (success, error, or early exit).
 	patchBase := client.MergeFrom(kccCP.DeepCopy())
 	defer func() {
 		if err := r.Status().Patch(ctx, kccCP, patchBase); err != nil && reterr == nil {
@@ -170,41 +172,26 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 	if kccInfraCluster.Status.Initialization == nil || kccInfraCluster.Status.Initialization.Provisioned == nil || !*kccInfraCluster.Status.Initialization.Provisioned {
 		log.Info("Waiting for infrastructure cluster to be provisioned")
 		apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{
-			Type:               infrav1exp.KCCClusterReadyCondition,
-			Status:             metav1.ConditionFalse,
-			Reason:             clusterv1.WaitingForClusterInfrastructureReadyReason,
-			Message:            "Waiting for infrastructure cluster to be provisioned",
-			LastTransitionTime: metav1.Now(),
+			Type:    infrav1exp.ReadyCondition,
+			Status:  metav1.ConditionFalse,
+			Reason:  clusterv1.WaitingForClusterInfrastructureReadyReason,
+			Message: "Waiting for infrastructure cluster to be provisioned",
 		})
 		return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
 	}
 
-	// 4. Apply defaults.
-	if err := applyContainerClusterDefaults(
-		&kccCP.Spec.ContainerCluster,
-		cluster.Name,
-		kccInfraCluster.Status.NetworkName,
-		kccInfraCluster.Status.SubnetworkName,
-		getSpecString(kccInfraCluster.Spec.Subnetwork.Spec, "region"),
-		kccCP.Namespace,
-	); err != nil {
-		return ctrl.Result{}, fmt.Errorf("applying cluster defaults: %w", err)
+	// 4. Apply defaults and CAPI overrides.
+	if err := applyControlPlaneDefaults(kccCP, cluster, kccInfraCluster); err != nil {
+		return ctrl.Result{}, fmt.Errorf("applying defaults: %w", err)
 	}
 
-	// 5. Apply overrides: version from kccCP.Spec.Version.
-	if kccCP.Spec.Version != nil {
-		if err := applyClusterVersionOverride(&kccCP.Spec.ContainerCluster, *kccCP.Spec.Version); err != nil {
-			return ctrl.Result{}, fmt.Errorf("applying version override: %w", err)
-		}
-	}
-
-	// 6. Convert to unstructured ContainerCluster.
-	containerClusterU, err := infrav1exp.ToUnstructuredContainerCluster(kccCP.Spec.ContainerCluster, kccCP.Namespace)
+	// 5. Convert to unstructured ContainerCluster.
+	containerClusterU, err := infrav1exp.ToUnstructured(kccCP.Spec.ContainerCluster, infrav1exp.ContainerClusterGVK)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("converting ContainerCluster to unstructured: %w", err)
 	}
 
-	// 7. Set owner ref, create or patch.
+	// 6. Set owner ref, create or patch.
 	kccCPGVK := schema.GroupVersionKind{
 		Group:   infrav1exp.GroupVersion.Group,
 		Version: infrav1exp.GroupVersion.Version,
@@ -218,17 +205,19 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 		return ctrl.Result{}, fmt.Errorf("creating/patching KCC ContainerCluster: %w", err)
 	}
 
-	// 8. Check readiness.
+	// 7. Check readiness.
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(infrav1exp.ContainerClusterGVK)
-	if err := r.Get(ctx, types.NamespacedName{Name: kccCP.Spec.ContainerCluster.Metadata.Name, Namespace: kccCP.Namespace}, existing); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: containerClusterU.GetName(), Namespace: kccCP.Namespace}, existing); err != nil {
 		return ctrl.Result{}, fmt.Errorf("getting KCC ContainerCluster: %w", err)
 	}
 
-	// 9. If ready, set status fields and generate kubeconfig.
-	if isKCCResourceReady(existing) {
-		endpoint, _ := getKCCStatusField(existing, "endpoint")
-		caCert, _ := getKCCStatusField(existing, "masterAuth", "clusterCaCertificate")
+	ready, readyMsg := getKCCReadiness(existing)
+
+	// 8. If ready, set status fields and generate kubeconfig.
+	if ready {
+		endpoint, _ := getStatusFieldFromUnstructured(existing, "endpoint")
+		caCert, _ := getStatusFieldFromUnstructured(existing, "masterAuth", "clusterCaCertificate")
 
 		kccCP.Spec.ControlPlaneEndpoint = clusterv1beta1.APIEndpoint{
 			Host: endpoint,
@@ -240,9 +229,9 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 		kccCP.Status.Initialization = &infrav1exp.GCPKCCManagedControlPlaneInitializationStatus{
 			ControlPlaneInitialized: ptr.To(true),
 		}
-		kccCP.Status.ClusterName = kccCP.Spec.ContainerCluster.Metadata.Name
+		kccCP.Status.ClusterName = containerClusterU.GetName()
 
-		masterVersion, _ := getKCCStatusField(existing, "masterVersion")
+		masterVersion, _ := getStatusFieldFromUnstructured(existing, "masterVersion")
 		if masterVersion != "" {
 			kccCP.Status.Version = &masterVersion
 		}
@@ -255,27 +244,26 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 		}
 
 		apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{
-			Type:               infrav1exp.KCCClusterReadyCondition,
-			Status:             metav1.ConditionTrue,
-			Reason:             clusterv1.ReadyReason,
-			LastTransitionTime: metav1.Now(),
+			Type:    infrav1exp.ReadyCondition,
+			Status:  metav1.ConditionTrue,
+			Reason:  clusterv1.ReadyReason,
+			Message: "KCC ContainerCluster is ready",
 		})
 
 		log.Info("GCPKCCManagedControlPlane is ready")
 		return ctrl.Result{}, nil
 	}
 
-	// 10. Not ready: requeue.
-	msg := getKCCConditionMessage(existing)
+	// 9. Not ready: requeue.
+	msg := readyMsg
 	if msg == "" {
 		msg = "KCC ContainerCluster is not yet ready"
 	}
 	apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{
-		Type:               infrav1exp.KCCClusterReadyCondition,
-		Status:             metav1.ConditionFalse,
-		Reason:             clusterv1.NotReadyReason,
-		Message:            msg,
-		LastTransitionTime: metav1.Now(),
+		Type:    infrav1exp.ReadyCondition,
+		Status:  metav1.ConditionFalse,
+		Reason:  clusterv1.NotReadyReason,
+		Message: msg,
 	})
 
 	log.Info("KCC ContainerCluster not yet ready, requeueing")
@@ -287,7 +275,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileDelete(ctx context.Contex
 	log.Info("Reconciling Delete GCPKCCManagedControlPlane")
 
 	// 1. Delete the ContainerCluster KCC resource.
-	gone, err := deleteResource(ctx, r.Client, infrav1exp.ContainerClusterGVK, kccCP.Spec.ContainerCluster.Metadata.Name, kccCP.Namespace)
+	gone, err := deleteResource(ctx, r.Client, infrav1exp.ContainerClusterGVK, getRawName(kccCP.Spec.ContainerCluster), kccCP.Namespace)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("deleting KCC ContainerCluster: %w", err)
 	}

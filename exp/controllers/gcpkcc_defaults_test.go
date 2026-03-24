@@ -25,129 +25,169 @@ import (
 	"k8s.io/utils/ptr"
 
 	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
-func rawExt(jsonStr string) *runtime.RawExtension {
+func rawKCC(jsonStr string) *runtime.RawExtension {
 	return &runtime.RawExtension{Raw: []byte(jsonStr)}
 }
 
-func specMap(t *testing.T, raw *runtime.RawExtension) map[string]interface{} {
+func rawMap(t *testing.T, raw *runtime.RawExtension) map[string]interface{} {
 	t.Helper()
 	if raw == nil || raw.Raw == nil {
 		return nil
 	}
 	m := map[string]interface{}{}
 	if err := json.Unmarshal(raw.Raw, &m); err != nil {
-		t.Fatalf("unmarshal spec: %v", err)
+		t.Fatalf("unmarshal raw: %v", err)
 	}
 	return m
 }
 
-func TestApplyNetworkDefaults(t *testing.T) {
+func TestApplyClusterDefaults(t *testing.T) {
 	tests := []struct {
-		name        string
-		network     infrav1exp.GCPKCCNetworkResource
-		clusterName string
-		wantName    string
-		wantNS      string
-		wantAutoSub bool
-		wantRouting string
+		name            string
+		network         string // raw JSON or ""
+		subnetwork      string
+		clusterName     string
+		podCIDR         string
+		svcCIDR         string
+		wantNetName     string
+		wantNetNS       string
+		wantSubName     string
+		wantRoutingMode string
+		wantAutoSub     bool
 	}{
 		{
-			name:        "empty network",
-			network:     infrav1exp.GCPKCCNetworkResource{},
-			clusterName: "my-cluster",
-			wantName:    "my-cluster",
-			wantNS:      "default",
-			wantAutoSub: false,
-			wantRouting: "REGIONAL",
+			name:            "empty resources get defaults",
+			network:         "",
+			subnetwork:      "",
+			clusterName:     "my-cluster",
+			wantNetName:     "my-cluster",
+			wantNetNS:       "default",
+			wantSubName:     "my-cluster",
+			wantRoutingMode: "REGIONAL",
+			wantAutoSub:     false,
 		},
 		{
-			name: "user values preserved",
-			network: infrav1exp.GCPKCCNetworkResource{
-				Spec: rawExt(`{"routingMode":"GLOBAL"}`),
-			},
+			name:            "user-specified routing mode preserved",
+			network:         `{"spec":{"routingMode":"GLOBAL"}}`,
+			subnetwork:      "",
+			clusterName:     "my-cluster",
+			wantNetName:     "my-cluster",
+			wantNetNS:       "default",
+			wantSubName:     "my-cluster",
+			wantRoutingMode: "GLOBAL",
+			wantAutoSub:     false,
+		},
+		{
+			name:            "user-specified name preserved",
+			network:         `{"metadata":{"name":"custom-net"}}`,
+			subnetwork:      `{"metadata":{"name":"custom-sub"}}`,
+			clusterName:     "my-cluster",
+			wantNetName:     "custom-net",
+			wantNetNS:       "default",
+			wantSubName:     "custom-sub",
+			wantRoutingMode: "REGIONAL",
+			wantAutoSub:     false,
+		},
+		{
+			name:        "CIDR overrides applied",
+			network:     "",
+			subnetwork:  "",
 			clusterName: "my-cluster",
-			wantName:    "my-cluster",
-			wantNS:      "default",
+			podCIDR:     "10.0.0.0/14",
+			svcCIDR:     "10.4.0.0/20",
+			wantNetName: "my-cluster",
+			wantNetNS:   "default",
+			wantSubName: "my-cluster",
+			wantRoutingMode: "REGIONAL",
 			wantAutoSub: false,
-			wantRouting: "GLOBAL",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := applyNetworkDefaults(&tt.network, tt.clusterName, "default"); err != nil {
-				t.Fatalf("applyNetworkDefaults() error = %v", err)
+			kccCluster := &infrav1exp.GCPKCCManagedCluster{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test",
+					Namespace: "default",
+				},
 			}
-			if got := tt.network.Metadata.Name; got != tt.wantName {
-				t.Errorf("Metadata.Name = %q, want %q", got, tt.wantName)
+			if tt.network != "" {
+				kccCluster.Spec.Network = rawKCC(tt.network)
 			}
-			if got := tt.network.Metadata.Namespace; got != tt.wantNS {
-				t.Errorf("Metadata.Namespace = %q, want %q", got, tt.wantNS)
+			if tt.subnetwork != "" {
+				kccCluster.Spec.Subnetwork = rawKCC(tt.subnetwork)
 			}
-			m := specMap(t, tt.network.Spec)
-			if got, _ := m["autoCreateSubnetworks"].(bool); got != tt.wantAutoSub {
+
+			cluster := &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{Name: tt.clusterName},
+			}
+			if tt.podCIDR != "" {
+				cluster.Spec.ClusterNetwork.Pods = clusterv1.NetworkRanges{CIDRBlocks: []string{tt.podCIDR}}
+			}
+			if tt.svcCIDR != "" {
+				cluster.Spec.ClusterNetwork.Services = clusterv1.NetworkRanges{CIDRBlocks: []string{tt.svcCIDR}}
+			}
+
+			if err := applyClusterDefaults(kccCluster, cluster); err != nil {
+				t.Fatalf("applyClusterDefaults() error = %v", err)
+			}
+
+			netMap := rawMap(t, kccCluster.Spec.Network)
+			netMD, _ := netMap["metadata"].(map[string]interface{})
+			netSpec, _ := netMap["spec"].(map[string]interface{})
+
+			if got, _ := netMD["name"].(string); got != tt.wantNetName {
+				t.Errorf("network metadata.name = %q, want %q", got, tt.wantNetName)
+			}
+			if got, _ := netMD["namespace"].(string); got != tt.wantNetNS {
+				t.Errorf("network metadata.namespace = %q, want %q", got, tt.wantNetNS)
+			}
+			if got, _ := netSpec["autoCreateSubnetworks"].(bool); got != tt.wantAutoSub {
 				t.Errorf("autoCreateSubnetworks = %v, want %v", got, tt.wantAutoSub)
 			}
-			if got, _ := m["routingMode"].(string); got != tt.wantRouting {
-				t.Errorf("routingMode = %q, want %q", got, tt.wantRouting)
+			if got, _ := netSpec["routingMode"].(string); got != tt.wantRoutingMode {
+				t.Errorf("routingMode = %q, want %q", got, tt.wantRoutingMode)
+			}
+
+			subMap := rawMap(t, kccCluster.Spec.Subnetwork)
+			subMD, _ := subMap["metadata"].(map[string]interface{})
+			if got, _ := subMD["name"].(string); got != tt.wantSubName {
+				t.Errorf("subnetwork metadata.name = %q, want %q", got, tt.wantSubName)
+			}
+
+			// Check CIDR overrides.
+			if tt.podCIDR != "" || tt.svcCIDR != "" {
+				subSpec, _ := subMap["spec"].(map[string]interface{})
+				ranges, _ := subSpec["secondaryIpRange"].([]interface{})
+				for _, r := range ranges {
+					rm, _ := r.(map[string]interface{})
+					name, _ := rm["rangeName"].(string)
+					cidr, _ := rm["ipCidrRange"].(string)
+					switch name {
+					case "pods":
+						if cidr != tt.podCIDR {
+							t.Errorf("pods CIDR = %q, want %q", cidr, tt.podCIDR)
+						}
+					case "services":
+						if cidr != tt.svcCIDR {
+							t.Errorf("services CIDR = %q, want %q", cidr, tt.svcCIDR)
+						}
+					}
+				}
 			}
 		})
 	}
 }
 
-func TestApplySubnetworkDefaults(t *testing.T) {
-	tests := []struct {
-		name           string
-		subnet         infrav1exp.GCPKCCSubnetworkResource
-		clusterName    string
-		networkName    string
-		wantName       string
-		wantNetworkRef string
-	}{
-		{
-			name:           "empty subnetwork",
-			subnet:         infrav1exp.GCPKCCSubnetworkResource{},
-			clusterName:    "my-cluster",
-			networkName:    "my-network",
-			wantName:       "my-cluster",
-			wantNetworkRef: "my-network",
-		},
-		{
-			name: "user values preserved",
-			subnet: infrav1exp.GCPKCCSubnetworkResource{
-				Metadata: metav1.ObjectMeta{Name: "custom-subnet"},
-			},
-			clusterName:    "my-cluster",
-			networkName:    "my-network",
-			wantName:       "custom-subnet",
-			wantNetworkRef: "my-network",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := applySubnetworkDefaults(&tt.subnet, tt.clusterName, tt.networkName, "default"); err != nil {
-				t.Fatalf("applySubnetworkDefaults() error = %v", err)
-			}
-			if got := tt.subnet.Metadata.Name; got != tt.wantName {
-				t.Errorf("Metadata.Name = %q, want %q", got, tt.wantName)
-			}
-			m := specMap(t, tt.subnet.Spec)
-			ref, _ := m["networkRef"].(map[string]interface{})
-			if got, _ := ref["name"].(string); got != tt.wantNetworkRef {
-				t.Errorf("networkRef.name = %q, want %q", got, tt.wantNetworkRef)
-			}
-		})
-	}
-}
-
-func TestApplyContainerClusterDefaults(t *testing.T) {
+func TestApplyControlPlaneDefaults(t *testing.T) {
 	tests := []struct {
 		name               string
-		cluster            infrav1exp.GCPKCCContainerClusterResource
+		containerCluster   string // raw JSON or ""
 		clusterName        string
+		version            *string
 		networkName        string
 		subnetworkName     string
 		subnetworkRegion   string
@@ -156,11 +196,13 @@ func TestApplyContainerClusterDefaults(t *testing.T) {
 		wantInitialCount   float64
 		wantRemoveDefault  bool
 		wantLocation       string
+		wantVersion        string
 	}{
 		{
-			name:               "empty cluster",
-			cluster:            infrav1exp.GCPKCCContainerClusterResource{},
+			name:               "empty cluster gets defaults",
+			containerCluster:   "",
 			clusterName:        "my-cluster",
+			version:            ptr.To("1.31"),
 			networkName:        "my-network",
 			subnetworkName:     "my-subnet",
 			subnetworkRegion:   "us-central1",
@@ -169,12 +211,11 @@ func TestApplyContainerClusterDefaults(t *testing.T) {
 			wantInitialCount:   1,
 			wantRemoveDefault:  true,
 			wantLocation:       "us-central1",
+			wantVersion:        "1.31",
 		},
 		{
-			name: "user values preserved",
-			cluster: infrav1exp.GCPKCCContainerClusterResource{
-				Spec: rawExt(`{"networkingMode":"ROUTES"}`),
-			},
+			name:               "user values preserved",
+			containerCluster:   `{"spec":{"networkingMode":"ROUTES"}}`,
 			clusterName:        "my-cluster",
 			networkName:        "my-network",
 			subnetworkName:     "my-subnet",
@@ -189,56 +230,105 @@ func TestApplyContainerClusterDefaults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := applyContainerClusterDefaults(&tt.cluster, tt.clusterName, tt.networkName, tt.subnetworkName, tt.subnetworkRegion, "default"); err != nil {
-				t.Fatalf("applyContainerClusterDefaults() error = %v", err)
+			kccCP := &infrav1exp.GCPKCCManagedControlPlane{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-cp",
+					Namespace: "default",
+				},
+				Spec: infrav1exp.GCPKCCManagedControlPlaneSpec{
+					Version: tt.version,
+				},
 			}
-			if got := tt.cluster.Metadata.Name; got != tt.wantName {
-				t.Errorf("Metadata.Name = %q, want %q", got, tt.wantName)
+			if tt.containerCluster != "" {
+				kccCP.Spec.ContainerCluster = rawKCC(tt.containerCluster)
 			}
-			m := specMap(t, tt.cluster.Spec)
-			if got, _ := m["networkingMode"].(string); got != tt.wantNetworkingMode {
+
+			cluster := &clusterv1.Cluster{
+				ObjectMeta: metav1.ObjectMeta{Name: tt.clusterName},
+			}
+
+			infraCluster := &infrav1exp.GCPKCCManagedCluster{
+				Spec: infrav1exp.GCPKCCManagedClusterSpec{
+					Subnetwork: rawKCC(`{"spec":{"region":"` + tt.subnetworkRegion + `"}}`),
+				},
+				Status: infrav1exp.GCPKCCManagedClusterStatus{
+					NetworkName:    tt.networkName,
+					SubnetworkName: tt.subnetworkName,
+				},
+			}
+
+			if err := applyControlPlaneDefaults(kccCP, cluster, infraCluster); err != nil {
+				t.Fatalf("applyControlPlaneDefaults() error = %v", err)
+			}
+
+			ccMap := rawMap(t, kccCP.Spec.ContainerCluster)
+			md, _ := ccMap["metadata"].(map[string]interface{})
+			spec, _ := ccMap["spec"].(map[string]interface{})
+
+			if got, _ := md["name"].(string); got != tt.wantName {
+				t.Errorf("metadata.name = %q, want %q", got, tt.wantName)
+			}
+			if got, _ := spec["networkingMode"].(string); got != tt.wantNetworkingMode {
 				t.Errorf("networkingMode = %q, want %q", got, tt.wantNetworkingMode)
 			}
-			if got, _ := m["initialNodeCount"].(float64); got != tt.wantInitialCount {
+			if got, _ := spec["initialNodeCount"].(float64); got != tt.wantInitialCount {
 				t.Errorf("initialNodeCount = %v, want %v", got, tt.wantInitialCount)
 			}
-			if got, _ := m["removeDefaultNodePool"].(bool); got != tt.wantRemoveDefault {
+			if got, _ := spec["removeDefaultNodePool"].(bool); got != tt.wantRemoveDefault {
 				t.Errorf("removeDefaultNodePool = %v, want %v", got, tt.wantRemoveDefault)
 			}
-			if got, _ := m["location"].(string); got != tt.wantLocation {
+			if got, _ := spec["location"].(string); got != tt.wantLocation {
 				t.Errorf("location = %q, want %q", got, tt.wantLocation)
+			}
+			if tt.wantVersion != "" {
+				if got, _ := spec["minMasterVersion"].(string); got != tt.wantVersion {
+					t.Errorf("minMasterVersion = %q, want %q", got, tt.wantVersion)
+				}
+			}
+
+			// Check remove-default-node-pool annotation.
+			annotations, _ := md["annotations"].(map[string]interface{})
+			if got, _ := annotations["cnrm.cloud.google.com/remove-default-node-pool"].(string); got != "true" {
+				t.Errorf("remove-default-node-pool annotation = %q, want %q", got, "true")
 			}
 		})
 	}
 }
 
-func TestApplyContainerNodePoolDefaults(t *testing.T) {
+func TestApplyMachinePoolDefaults(t *testing.T) {
 	tests := []struct {
 		name            string
-		nodePool        infrav1exp.GCPKCCContainerNodePoolResource
-		poolName        string
+		nodePool        string // raw JSON or ""
+		mmpName         string
 		clusterName     string
 		clusterLocation string
+		replicas        *int32
+		version         string
+		failureDomains  []string
 		wantName        string
 		wantClusterRef  string
 		wantLocation    string
+		wantReplicas    float64
+		wantVersion     string
 	}{
 		{
-			name:            "empty node pool",
-			nodePool:        infrav1exp.GCPKCCContainerNodePoolResource{},
-			poolName:        "pool-0",
+			name:            "empty node pool gets defaults",
+			nodePool:        "",
+			mmpName:         "pool-0",
 			clusterName:     "my-cluster",
 			clusterLocation: "us-central1",
+			replicas:        ptr.To[int32](3),
+			version:         "1.31",
 			wantName:        "pool-0",
 			wantClusterRef:  "my-cluster",
 			wantLocation:    "us-central1",
+			wantReplicas:    3,
+			wantVersion:     "1.31",
 		},
 		{
-			name: "user values preserved",
-			nodePool: infrav1exp.GCPKCCContainerNodePoolResource{
-				Spec: rawExt(`{"location":"europe-west1"}`),
-			},
-			poolName:        "pool-0",
+			name:            "user location preserved",
+			nodePool:        `{"spec":{"location":"europe-west1"}}`,
+			mmpName:         "pool-0",
 			clusterName:     "my-cluster",
 			clusterLocation: "us-central1",
 			wantName:        "pool-0",
@@ -249,145 +339,104 @@ func TestApplyContainerNodePoolDefaults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := applyContainerNodePoolDefaults(&tt.nodePool, tt.poolName, tt.clusterName, tt.clusterLocation, "default"); err != nil {
-				t.Fatalf("applyContainerNodePoolDefaults() error = %v", err)
+			kccMMP := &infrav1exp.GCPKCCManagedMachinePool{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      tt.mmpName,
+					Namespace: "default",
+				},
 			}
-			if got := tt.nodePool.Metadata.Name; got != tt.wantName {
-				t.Errorf("Metadata.Name = %q, want %q", got, tt.wantName)
+			if tt.nodePool != "" {
+				kccMMP.Spec.NodePool = rawKCC(tt.nodePool)
 			}
-			m := specMap(t, tt.nodePool.Spec)
-			ref, _ := m["clusterRef"].(map[string]interface{})
+
+			machinePool := &clusterv1.MachinePool{
+				Spec: clusterv1.MachinePoolSpec{
+					Replicas:       tt.replicas,
+					FailureDomains: tt.failureDomains,
+					Template: clusterv1.MachineTemplateSpec{
+						Spec: clusterv1.MachineSpec{
+							Version: tt.version,
+						},
+					},
+				},
+			}
+
+			kccCP := &infrav1exp.GCPKCCManagedControlPlane{
+				Spec: infrav1exp.GCPKCCManagedControlPlaneSpec{
+					ContainerCluster: rawKCC(`{"spec":{"location":"` + tt.clusterLocation + `"}}`),
+				},
+				Status: infrav1exp.GCPKCCManagedControlPlaneStatus{
+					ClusterName: tt.clusterName,
+				},
+			}
+
+			if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP); err != nil {
+				t.Fatalf("applyMachinePoolDefaults() error = %v", err)
+			}
+
+			npMap := rawMap(t, kccMMP.Spec.NodePool)
+			md, _ := npMap["metadata"].(map[string]interface{})
+			spec, _ := npMap["spec"].(map[string]interface{})
+
+			if got, _ := md["name"].(string); got != tt.wantName {
+				t.Errorf("metadata.name = %q, want %q", got, tt.wantName)
+			}
+
+			ref, _ := spec["clusterRef"].(map[string]interface{})
 			if got, _ := ref["name"].(string); got != tt.wantClusterRef {
 				t.Errorf("clusterRef.name = %q, want %q", got, tt.wantClusterRef)
 			}
-			if got, _ := m["location"].(string); got != tt.wantLocation {
+			if got, _ := spec["location"].(string); got != tt.wantLocation {
 				t.Errorf("location = %q, want %q", got, tt.wantLocation)
 			}
-		})
-	}
-}
-
-func TestApplySubnetworkCIDROverrides(t *testing.T) {
-	tests := []struct {
-		name      string
-		subnet    infrav1exp.GCPKCCSubnetworkResource
-		podCIDR   string
-		svcCIDR   string
-		wantCount int
-		wantPods  string
-		wantSvcs  string
-	}{
-		{
-			name:      "both CIDRs",
-			subnet:    infrav1exp.GCPKCCSubnetworkResource{},
-			podCIDR:   "10.0.0.0/14",
-			svcCIDR:   "10.4.0.0/20",
-			wantCount: 2,
-			wantPods:  "10.0.0.0/14",
-			wantSvcs:  "10.4.0.0/20",
-		},
-		{
-			name:      "no CIDRs",
-			subnet:    infrav1exp.GCPKCCSubnetworkResource{},
-			podCIDR:   "",
-			svcCIDR:   "",
-			wantCount: 0,
-		},
-		{
-			name: "existing ranges updated",
-			subnet: infrav1exp.GCPKCCSubnetworkResource{
-				Spec: rawExt(`{"secondaryIpRange":[{"rangeName":"pods","ipCidrRange":"10.0.0.0/16"}]}`),
-			},
-			podCIDR:   "10.0.0.0/14",
-			svcCIDR:   "",
-			wantCount: 1,
-			wantPods:  "10.0.0.0/14",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if err := applySubnetworkCIDROverrides(&tt.subnet, tt.podCIDR, tt.svcCIDR); err != nil {
-				t.Fatalf("applySubnetworkCIDROverrides() error = %v", err)
-			}
-			m := specMap(t, tt.subnet.Spec)
-			ranges, _ := m["secondaryIpRange"].([]interface{})
-			if len(ranges) != tt.wantCount {
-				t.Fatalf("secondaryIpRange length = %d, want %d", len(ranges), tt.wantCount)
-			}
-			for _, r := range ranges {
-				rm, _ := r.(map[string]interface{})
-				name, _ := rm["rangeName"].(string)
-				cidr, _ := rm["ipCidrRange"].(string)
-				switch name {
-				case "pods":
-					if cidr != tt.wantPods {
-						t.Errorf("pods CIDR = %q, want %q", cidr, tt.wantPods)
-					}
-				case "services":
-					if cidr != tt.wantSvcs {
-						t.Errorf("services CIDR = %q, want %q", cidr, tt.wantSvcs)
-					}
+			if tt.wantReplicas > 0 {
+				if got, _ := spec["initialNodeCount"].(float64); got != tt.wantReplicas {
+					t.Errorf("initialNodeCount = %v, want %v", got, tt.wantReplicas)
 				}
 			}
+			if tt.wantVersion != "" {
+				if got, _ := spec["version"].(string); got != tt.wantVersion {
+					t.Errorf("version = %q, want %q", got, tt.wantVersion)
+				}
+			}
+
+			// Check state-into-spec annotation.
+			annotations, _ := md["annotations"].(map[string]interface{})
+			if got, _ := annotations["cnrm.cloud.google.com/state-into-spec"].(string); got != "merge" {
+				t.Errorf("state-into-spec annotation = %q, want %q", got, "merge")
+			}
 		})
 	}
 }
 
-func TestApplyClusterVersionOverride(t *testing.T) {
+func TestGetRawName(t *testing.T) {
 	tests := []struct {
-		name    string
-		version string
-		want    string
+		name string
+		raw  *runtime.RawExtension
+		want string
 	}{
-		{name: "version set", version: "1.31", want: "1.31"},
-		{name: "empty version", version: "", want: ""},
+		{
+			name: "has name",
+			raw:  rawKCC(`{"metadata":{"name":"test-resource"}}`),
+			want: "test-resource",
+		},
+		{
+			name: "nil raw",
+			raw:  nil,
+			want: "",
+		},
+		{
+			name: "no metadata",
+			raw:  rawKCC(`{"spec":{"foo":"bar"}}`),
+			want: "",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cluster := &infrav1exp.GCPKCCContainerClusterResource{}
-			if err := applyClusterVersionOverride(cluster, tt.version); err != nil {
-				t.Fatalf("applyClusterVersionOverride() error = %v", err)
-			}
-			m := specMap(t, cluster.Spec)
-			got, _ := m["minMasterVersion"].(string)
+			got := getRawName(tt.raw)
 			if got != tt.want {
-				t.Errorf("minMasterVersion = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestApplyNodePoolReplicasOverride(t *testing.T) {
-	tests := []struct {
-		name     string
-		replicas *int32
-		want     float64
-		wantNil  bool
-	}{
-		{name: "replicas set", replicas: ptr.To[int32](3), want: 3},
-		{name: "nil replicas", replicas: nil, wantNil: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			nodePool := &infrav1exp.GCPKCCContainerNodePoolResource{}
-			if err := applyNodePoolReplicasOverride(nodePool, tt.replicas); err != nil {
-				t.Fatalf("applyNodePoolReplicasOverride() error = %v", err)
-			}
-			m := specMap(t, nodePool.Spec)
-			if tt.wantNil {
-				if m != nil {
-					if _, ok := m["initialNodeCount"]; ok {
-						t.Errorf("initialNodeCount should not be set")
-					}
-				}
-			} else {
-				got, _ := m["initialNodeCount"].(float64)
-				if got != tt.want {
-					t.Errorf("initialNodeCount = %v, want %v", got, tt.want)
-				}
+				t.Errorf("getRawName() = %q, want %q", got, tt.want)
 			}
 		})
 	}

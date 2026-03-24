@@ -55,23 +55,11 @@ spec:
                       template.
                     properties:
                       containerCluster:
-                        description: ContainerCluster defines the KCC ContainerCluster
-                          resource.
-                        properties:
-                          metadata:
-                            description: Metadata for the KCC resource.
-                            type: object
-                          spec:
-                            description: Spec is the desired KCC resource spec, passed
-                              through as raw JSON.
-                            x-kubernetes-preserve-unknown-fields: true
-                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
                       version:
                         description: Version is the Kubernetes version for the control
                           plane.
                         type: string
-                    required:
-                    - containerCluster
                     type: object
                 required:
                 - spec

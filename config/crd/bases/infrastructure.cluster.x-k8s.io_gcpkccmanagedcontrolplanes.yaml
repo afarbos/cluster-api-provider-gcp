@@ -68,16 +68,9 @@ spec:
               GCPKCCManagedControlPlane.
             properties:
               containerCluster:
-                description: ContainerCluster defines the KCC ContainerCluster resource.
-                properties:
-                  metadata:
-                    description: Metadata for the KCC resource.
-                    type: object
-                  spec:
-                    description: Spec is the desired KCC resource spec, passed through
-                      as raw JSON.
-                    x-kubernetes-preserve-unknown-fields: true
-                type: object
+                description: ContainerCluster defines the KCC ContainerCluster resource
+                  (metadata + spec as raw JSON).
+                x-kubernetes-preserve-unknown-fields: true
               controlPlaneEndpoint:
                 description: ControlPlaneEndpoint represents the endpoint used to
                   communicate with the control plane.
@@ -95,11 +88,8 @@ spec:
                 - port
                 type: object
               version:
-                description: Version is the desired Kubernetes version. Overridden
-                  onto ContainerCluster.Spec.MinMasterVersion.
+                description: Version is the desired Kubernetes version.
                 type: string
-            required:
-            - containerCluster
             type: object
           status:
             description: GCPKCCManagedControlPlaneStatus defines the observed state

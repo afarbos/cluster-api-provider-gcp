@@ -18,6 +18,7 @@ package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // GCPKCCManagedMachinePoolTemplateSpec defines the desired state of GCPKCCManagedMachinePoolTemplate.
@@ -57,6 +58,8 @@ type GCPKCCManagedMachinePoolTemplateResource struct {
 
 // GCPKCCManagedMachinePoolTemplateResourceSpec defines the desired state of GCPKCCManagedMachinePool for use in a template.
 type GCPKCCManagedMachinePoolTemplateResourceSpec struct {
-	// NodePool defines the KCC ContainerNodePool resource.
-	NodePool GCPKCCContainerNodePoolResource `json:"nodePool"`
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	NodePool *runtime.RawExtension `json:"nodePool,omitempty"`
 }

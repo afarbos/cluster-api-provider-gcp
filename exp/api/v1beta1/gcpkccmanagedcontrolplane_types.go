@@ -18,6 +18,7 @@ package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 )
 
@@ -28,10 +29,13 @@ const (
 
 // GCPKCCManagedControlPlaneSpec defines the desired state of GCPKCCManagedControlPlane.
 type GCPKCCManagedControlPlaneSpec struct {
-	// ContainerCluster defines the KCC ContainerCluster resource.
-	ContainerCluster GCPKCCContainerClusterResource `json:"containerCluster"`
+	// ContainerCluster defines the KCC ContainerCluster resource (metadata + spec as raw JSON).
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	ContainerCluster *runtime.RawExtension `json:"containerCluster,omitempty"`
 
-	// Version is the desired Kubernetes version. Overridden onto ContainerCluster.Spec.MinMasterVersion.
+	// Version is the desired Kubernetes version.
 	// +optional
 	Version *string `json:"version,omitempty"`
 

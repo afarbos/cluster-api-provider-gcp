@@ -23,9 +23,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
-func specToMap(raw *runtime.RawExtension) (map[string]interface{}, error) {
+// rawToMap converts a RawExtension to a map.
+func rawToMap(raw *runtime.RawExtension) (map[string]interface{}, error) {
 	if raw == nil || raw.Raw == nil {
 		return map[string]interface{}{}, nil
 	}
@@ -36,7 +38,8 @@ func specToMap(raw *runtime.RawExtension) (map[string]interface{}, error) {
 	return m, nil
 }
 
-func mapToRawExtension(m map[string]interface{}) (*runtime.RawExtension, error) {
+// mapToRaw converts a map to a RawExtension.
+func mapToRaw(m map[string]interface{}) (*runtime.RawExtension, error) {
 	raw, err := json.Marshal(m)
 	if err != nil {
 		return nil, err
@@ -44,147 +47,51 @@ func mapToRawExtension(m map[string]interface{}) (*runtime.RawExtension, error) 
 	return &runtime.RawExtension{Raw: raw}, nil
 }
 
+// getRawMetadata returns the metadata map from a raw KCC object, or an empty map.
+func getRawMetadata(m map[string]interface{}) map[string]interface{} {
+	md, _ := m["metadata"].(map[string]interface{})
+	if md == nil {
+		md = map[string]interface{}{}
+		m["metadata"] = md
+	}
+	return md
+}
+
+// getRawSpec returns the spec map from a raw KCC object, or an empty map.
+func getRawSpec(m map[string]interface{}) map[string]interface{} {
+	spec, _ := m["spec"].(map[string]interface{})
+	if spec == nil {
+		spec = map[string]interface{}{}
+		m["spec"] = spec
+	}
+	return spec
+}
+
+// getRawMetadataString reads a string field from metadata.
+func getRawMetadataString(m map[string]interface{}, key string) string {
+	md := getRawMetadata(m)
+	v, _ := md[key].(string)
+	return v
+}
+
+// getRawSpecString reads a string field from spec.
+func getRawSpecString(m map[string]interface{}, key string) string {
+	spec := getRawSpec(m)
+	v, _ := spec[key].(string)
+	return v
+}
+
+// getRawName is a convenience function that extracts the metadata.name from a
+// raw KCC resource. Used in delete paths where conversion hasn't occurred.
+func getRawName(raw *runtime.RawExtension) string {
+	m, _ := rawToMap(raw)
+	return getRawMetadataString(m, "name")
+}
+
 func setIfAbsent(m map[string]interface{}, key string, value interface{}) {
 	if _, ok := m[key]; !ok {
 		m[key] = value
 	}
-}
-
-// getSpecString extracts a string value from a RawExtension spec map.
-func getSpecString(raw *runtime.RawExtension, key string) string {
-	m, err := specToMap(raw)
-	if err != nil {
-		return ""
-	}
-	v, ok := m[key].(string)
-	if !ok {
-		return ""
-	}
-	return v
-}
-
-// --- Default functions (set only when field is empty/nil) ---
-
-// applyNetworkDefaults sets default values on the KCC ComputeNetwork resource
-// when fields are not already set by the user.
-func applyNetworkDefaults(network *infrav1exp.GCPKCCNetworkResource, clusterName, ownerNamespace string) error {
-	if network.Metadata.Name == "" {
-		network.Metadata.Name = clusterName
-	}
-	if network.Metadata.Namespace == "" {
-		network.Metadata.Namespace = ownerNamespace
-	}
-	spec, err := specToMap(network.Spec)
-	if err != nil {
-		return fmt.Errorf("parsing network spec: %w", err)
-	}
-	setIfAbsent(spec, "autoCreateSubnetworks", false)
-	setIfAbsent(spec, "routingMode", "REGIONAL")
-	network.Spec, err = mapToRawExtension(spec)
-	return err
-}
-
-// applySubnetworkDefaults sets default values on the KCC ComputeSubnetwork
-// resource when fields are not already set by the user.
-func applySubnetworkDefaults(subnet *infrav1exp.GCPKCCSubnetworkResource, clusterName, networkName, ownerNamespace string) error {
-	if subnet.Metadata.Name == "" {
-		subnet.Metadata.Name = clusterName
-	}
-	if subnet.Metadata.Namespace == "" {
-		subnet.Metadata.Namespace = ownerNamespace
-	}
-	spec, err := specToMap(subnet.Spec)
-	if err != nil {
-		return fmt.Errorf("parsing subnetwork spec: %w", err)
-	}
-	if _, ok := spec["networkRef"]; !ok {
-		spec["networkRef"] = map[string]interface{}{"name": networkName}
-	}
-	subnet.Spec, err = mapToRawExtension(spec)
-	return err
-}
-
-// applyContainerClusterDefaults sets default values on the KCC ContainerCluster
-// resource when fields are not already set by the user.
-func applyContainerClusterDefaults(cluster *infrav1exp.GCPKCCContainerClusterResource, clusterName, networkName, subnetworkName, subnetworkRegion, ownerNamespace string) error {
-	if cluster.Metadata.Name == "" {
-		cluster.Metadata.Name = clusterName
-	}
-	if cluster.Metadata.Namespace == "" {
-		cluster.Metadata.Namespace = ownerNamespace
-	}
-	spec, err := specToMap(cluster.Spec)
-	if err != nil {
-		return fmt.Errorf("parsing cluster spec: %w", err)
-	}
-	if _, ok := spec["networkRef"]; !ok {
-		spec["networkRef"] = map[string]interface{}{"name": networkName}
-	}
-	if _, ok := spec["subnetworkRef"]; !ok {
-		spec["subnetworkRef"] = map[string]interface{}{"name": subnetworkName}
-	}
-	setIfAbsent(spec, "initialNodeCount", int64(1))
-	setIfAbsent(spec, "networkingMode", "VPC_NATIVE")
-	setIfAbsent(spec, "removeDefaultNodePool", true)
-	if _, ok := spec["location"]; !ok && subnetworkRegion != "" {
-		spec["location"] = subnetworkRegion
-	}
-	cluster.Spec, err = mapToRawExtension(spec)
-	return err
-}
-
-// applyContainerNodePoolDefaults sets default values on the KCC
-// ContainerNodePool resource when fields are not already set by the user.
-func applyContainerNodePoolDefaults(nodePool *infrav1exp.GCPKCCContainerNodePoolResource, name, clusterName, clusterLocation, ownerNamespace string) error {
-	if nodePool.Metadata.Name == "" {
-		nodePool.Metadata.Name = name
-	}
-	if nodePool.Metadata.Namespace == "" {
-		nodePool.Metadata.Namespace = ownerNamespace
-	}
-	// Enable state-into-spec merge so KCC populates spec.initialNodeCount
-	// with the actual node count from GCP (used for status.replicas).
-	if nodePool.Metadata.Annotations == nil {
-		nodePool.Metadata.Annotations = map[string]string{}
-	}
-	nodePool.Metadata.Annotations["cnrm.cloud.google.com/state-into-spec"] = "merge"
-	spec, err := specToMap(nodePool.Spec)
-	if err != nil {
-		return fmt.Errorf("parsing nodepool spec: %w", err)
-	}
-	if _, ok := spec["clusterRef"]; !ok {
-		spec["clusterRef"] = map[string]interface{}{"name": clusterName}
-	}
-	if _, ok := spec["location"]; !ok && clusterLocation != "" {
-		spec["location"] = clusterLocation
-	}
-	nodePool.Spec, err = mapToRawExtension(spec)
-	return err
-}
-
-// --- Override functions (always applied, CAPI is source of truth) ---
-
-// applySubnetworkCIDROverrides ensures that the pod and service CIDR secondary
-// IP ranges are set on the subnetwork. CAPI-specified CIDRs always take
-// precedence over user-configured values.
-func applySubnetworkCIDROverrides(subnet *infrav1exp.GCPKCCSubnetworkResource, podCIDR, serviceCIDR string) error {
-	if podCIDR == "" && serviceCIDR == "" {
-		return nil
-	}
-	spec, err := specToMap(subnet.Spec)
-	if err != nil {
-		return fmt.Errorf("parsing subnetwork spec: %w", err)
-	}
-	ranges, _ := spec["secondaryIpRange"].([]interface{})
-	if podCIDR != "" {
-		ranges = upsertSecondaryIPRange(ranges, "pods", podCIDR)
-	}
-	if serviceCIDR != "" {
-		ranges = upsertSecondaryIPRange(ranges, "services", serviceCIDR)
-	}
-	spec["secondaryIpRange"] = ranges
-	subnet.Spec, err = mapToRawExtension(spec)
-	return err
 }
 
 // upsertSecondaryIPRange updates the secondary IP range with the given
@@ -207,66 +114,167 @@ func upsertSecondaryIPRange(ranges []interface{}, rangeName, ipCidrRange string)
 	})
 }
 
-// applyClusterVersionOverride sets the minimum master version on the KCC
-// ContainerCluster. This is always applied when a version is specified by CAPI.
-func applyClusterVersionOverride(cluster *infrav1exp.GCPKCCContainerClusterResource, version string) error {
-	if version == "" {
-		return nil
-	}
-	spec, err := specToMap(cluster.Spec)
+// applyClusterDefaults sets defaults and CAPI overrides on the network and
+// subnetwork KCC resources for the given GCPKCCManagedCluster.
+func applyClusterDefaults(kccCluster *infrav1exp.GCPKCCManagedCluster, cluster *clusterv1.Cluster) error {
+	// --- Network ---
+	netMap, err := rawToMap(kccCluster.Spec.Network)
 	if err != nil {
-		return fmt.Errorf("parsing cluster spec: %w", err)
+		return fmt.Errorf("parsing network: %w", err)
 	}
-	spec["minMasterVersion"] = version
-	cluster.Spec, err = mapToRawExtension(spec)
+	md := getRawMetadata(netMap)
+	if md["name"] == nil || md["name"] == "" {
+		md["name"] = cluster.Name
+	}
+	if md["namespace"] == nil || md["namespace"] == "" {
+		md["namespace"] = kccCluster.Namespace
+	}
+	spec := getRawSpec(netMap)
+	setIfAbsent(spec, "autoCreateSubnetworks", false)
+	setIfAbsent(spec, "routingMode", "REGIONAL")
+	kccCluster.Spec.Network, err = mapToRaw(netMap)
+	if err != nil {
+		return err
+	}
+
+	// --- Subnetwork ---
+	subMap, err := rawToMap(kccCluster.Spec.Subnetwork)
+	if err != nil {
+		return fmt.Errorf("parsing subnetwork: %w", err)
+	}
+	md = getRawMetadata(subMap)
+	if md["name"] == nil || md["name"] == "" {
+		md["name"] = cluster.Name
+	}
+	if md["namespace"] == nil || md["namespace"] == "" {
+		md["namespace"] = kccCluster.Namespace
+	}
+	spec = getRawSpec(subMap)
+	networkName := getRawMetadataString(netMap, "name")
+	if _, ok := spec["networkRef"]; !ok {
+		spec["networkRef"] = map[string]interface{}{"name": networkName}
+	}
+
+	// CIDR overrides from Cluster.Spec.ClusterNetwork
+	{
+		ranges, _ := spec["secondaryIpRange"].([]interface{})
+		if len(cluster.Spec.ClusterNetwork.Pods.CIDRBlocks) > 0 {
+			ranges = upsertSecondaryIPRange(ranges, "pods", cluster.Spec.ClusterNetwork.Pods.CIDRBlocks[0])
+		}
+		if len(cluster.Spec.ClusterNetwork.Services.CIDRBlocks) > 0 {
+			ranges = upsertSecondaryIPRange(ranges, "services", cluster.Spec.ClusterNetwork.Services.CIDRBlocks[0])
+		}
+		if len(ranges) > 0 {
+			spec["secondaryIpRange"] = ranges
+		}
+	}
+
+	kccCluster.Spec.Subnetwork, err = mapToRaw(subMap)
 	return err
 }
 
-// applyNodePoolReplicasOverride sets the initial node count on the KCC
-// ContainerNodePool. This is always applied when replicas are specified by CAPI.
-func applyNodePoolReplicasOverride(nodePool *infrav1exp.GCPKCCContainerNodePoolResource, replicas *int32) error {
-	if replicas == nil {
-		return nil
-	}
-	spec, err := specToMap(nodePool.Spec)
+// applyControlPlaneDefaults sets defaults and CAPI overrides on the ContainerCluster
+// KCC resource for the given GCPKCCManagedControlPlane.
+func applyControlPlaneDefaults(kccCP *infrav1exp.GCPKCCManagedControlPlane, cluster *clusterv1.Cluster, infraCluster *infrav1exp.GCPKCCManagedCluster) error {
+	ccMap, err := rawToMap(kccCP.Spec.ContainerCluster)
 	if err != nil {
-		return fmt.Errorf("parsing nodepool spec: %w", err)
+		return fmt.Errorf("parsing container cluster: %w", err)
 	}
-	spec["initialNodeCount"] = int64(*replicas)
-	nodePool.Spec, err = mapToRawExtension(spec)
+	md := getRawMetadata(ccMap)
+	if md["name"] == nil || md["name"] == "" {
+		md["name"] = cluster.Name
+	}
+	if md["namespace"] == nil || md["namespace"] == "" {
+		md["namespace"] = kccCP.Namespace
+	}
+
+	spec := getRawSpec(ccMap)
+	if _, ok := spec["networkRef"]; !ok {
+		spec["networkRef"] = map[string]interface{}{"name": infraCluster.Status.NetworkName}
+	}
+	if _, ok := spec["subnetworkRef"]; !ok {
+		spec["subnetworkRef"] = map[string]interface{}{"name": infraCluster.Status.SubnetworkName}
+	}
+	setIfAbsent(spec, "initialNodeCount", int64(1))
+	setIfAbsent(spec, "networkingMode", "VPC_NATIVE")
+	setIfAbsent(spec, "removeDefaultNodePool", true)
+
+	// Default location from subnetwork region
+	if _, ok := spec["location"]; !ok {
+		subMap, _ := rawToMap(infraCluster.Spec.Subnetwork)
+		if region := getRawSpecString(subMap, "region"); region != "" {
+			spec["location"] = region
+		}
+	}
+
+	// Version override: CAPI version -> minMasterVersion
+	if kccCP.Spec.Version != nil && *kccCP.Spec.Version != "" {
+		spec["minMasterVersion"] = *kccCP.Spec.Version
+	}
+
+	// Set remove-default-node-pool annotation
+	annotations, _ := md["annotations"].(map[string]interface{})
+	if annotations == nil {
+		annotations = map[string]interface{}{}
+		md["annotations"] = annotations
+	}
+	annotations["cnrm.cloud.google.com/remove-default-node-pool"] = "true"
+
+	kccCP.Spec.ContainerCluster, err = mapToRaw(ccMap)
 	return err
 }
 
-// applyNodePoolVersionOverride sets the Kubernetes version on the KCC
-// ContainerNodePool. This is always applied when a version is specified by CAPI.
-func applyNodePoolVersionOverride(nodePool *infrav1exp.GCPKCCContainerNodePoolResource, version string) error {
-	if version == "" {
-		return nil
-	}
-	spec, err := specToMap(nodePool.Spec)
+// applyMachinePoolDefaults sets defaults and CAPI overrides on the ContainerNodePool
+// KCC resource for the given GCPKCCManagedMachinePool.
+func applyMachinePoolDefaults(kccMMP *infrav1exp.GCPKCCManagedMachinePool, machinePool *clusterv1.MachinePool, controlPlane *infrav1exp.GCPKCCManagedControlPlane) error {
+	npMap, err := rawToMap(kccMMP.Spec.NodePool)
 	if err != nil {
-		return fmt.Errorf("parsing nodepool spec: %w", err)
+		return fmt.Errorf("parsing nodepool: %w", err)
 	}
-	spec["version"] = version
-	nodePool.Spec, err = mapToRawExtension(spec)
-	return err
-}
+	md := getRawMetadata(npMap)
+	if md["name"] == nil || md["name"] == "" {
+		md["name"] = kccMMP.Name
+	}
+	if md["namespace"] == nil || md["namespace"] == "" {
+		md["namespace"] = kccMMP.Namespace
+	}
 
-// applyNodePoolFailureDomainOverride sets the node locations on the KCC
-// ContainerNodePool. This is always applied when failure domains are specified.
-func applyNodePoolFailureDomainOverride(nodePool *infrav1exp.GCPKCCContainerNodePoolResource, failureDomains []string) error {
-	if len(failureDomains) == 0 {
-		return nil
+	// Enable state-into-spec merge for actual node count in status.replicas
+	annotations, _ := md["annotations"].(map[string]interface{})
+	if annotations == nil {
+		annotations = map[string]interface{}{}
+		md["annotations"] = annotations
 	}
-	spec, err := specToMap(nodePool.Spec)
-	if err != nil {
-		return fmt.Errorf("parsing nodepool spec: %w", err)
+	annotations["cnrm.cloud.google.com/state-into-spec"] = "merge"
+
+	spec := getRawSpec(npMap)
+	if _, ok := spec["clusterRef"]; !ok {
+		spec["clusterRef"] = map[string]interface{}{"name": controlPlane.Status.ClusterName}
 	}
-	locs := make([]interface{}, len(failureDomains))
-	for i, l := range failureDomains {
-		locs[i] = l
+
+	// Default location from cluster
+	if _, ok := spec["location"]; !ok {
+		cpMap, _ := rawToMap(controlPlane.Spec.ContainerCluster)
+		if loc := getRawSpecString(cpMap, "location"); loc != "" {
+			spec["location"] = loc
+		}
 	}
-	spec["nodeLocations"] = locs
-	nodePool.Spec, err = mapToRawExtension(spec)
+
+	// CAPI overrides
+	if machinePool.Spec.Replicas != nil {
+		spec["initialNodeCount"] = int64(*machinePool.Spec.Replicas)
+	}
+	if machinePool.Spec.Template.Spec.Version != "" {
+		spec["version"] = machinePool.Spec.Template.Spec.Version
+	}
+	if len(machinePool.Spec.FailureDomains) > 0 {
+		locs := make([]interface{}, len(machinePool.Spec.FailureDomains))
+		for i, l := range machinePool.Spec.FailureDomains {
+			locs[i] = l
+		}
+		spec["nodeLocations"] = locs
+	}
+
+	kccMMP.Spec.NodePool, err = mapToRaw(npMap)
 	return err
 }

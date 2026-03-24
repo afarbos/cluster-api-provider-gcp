@@ -16,13 +16,15 @@ limitations under the License.
 
 package v1beta1
 
+// KCC condition types and reasons.
+//
+// The overall readiness condition uses ReadyCondition defined in
+// conditions_consts.go (shared with GKE controllers).
 const (
-	// KCC condition types for v1beta2 conditions (string type).
-	KCCNetworkReadyCondition    = "KCCNetworkReady"
-	KCCSubnetworkReadyCondition = "KCCSubnetworkReady"
-	KCCClusterReadyCondition    = "KCCClusterReady"
-	KCCNodePoolReadyCondition   = "KCCNodePoolReady"
-	KCCDegradedCondition        = "Degraded"
+	// KCCDegradedCondition indicates the resource is in a degraded state.
+	KCCDegradedCondition = "Degraded"
+
+	// KCCDeletionBlockedCondition indicates deletion is blocked.
 	KCCDeletionBlockedCondition = "DeletionBlocked"
 
 	// KCC condition reasons (KCC-specific only; use clusterv1 constants for

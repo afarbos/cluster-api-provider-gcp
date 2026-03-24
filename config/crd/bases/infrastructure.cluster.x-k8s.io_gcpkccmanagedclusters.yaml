@@ -78,30 +78,13 @@ spec:
                 - port
                 type: object
               network:
-                description: Network defines the KCC ComputeNetwork resource.
-                properties:
-                  metadata:
-                    description: Metadata for the KCC resource.
-                    type: object
-                  spec:
-                    description: Spec is the desired KCC resource spec, passed through
-                      as raw JSON.
-                    x-kubernetes-preserve-unknown-fields: true
-                type: object
+                description: Network defines the KCC ComputeNetwork resource (metadata
+                  + spec as raw JSON).
+                x-kubernetes-preserve-unknown-fields: true
               subnetwork:
-                description: Subnetwork defines the KCC ComputeSubnetwork resource.
-                properties:
-                  metadata:
-                    description: Metadata for the KCC resource.
-                    type: object
-                  spec:
-                    description: Spec is the desired KCC resource spec, passed through
-                      as raw JSON.
-                    x-kubernetes-preserve-unknown-fields: true
-                type: object
-            required:
-            - network
-            - subnetwork
+                description: Subnetwork defines the KCC ComputeSubnetwork resource
+                  (metadata + spec as raw JSON).
+                x-kubernetes-preserve-unknown-fields: true
             type: object
           status:
             description: GCPKCCManagedClusterStatus defines the observed state of

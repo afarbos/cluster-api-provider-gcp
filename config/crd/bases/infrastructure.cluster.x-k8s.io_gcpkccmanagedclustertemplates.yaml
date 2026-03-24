@@ -54,31 +54,9 @@ spec:
                       the desired state of GCPKCCManagedCluster for use in a template.
                     properties:
                       network:
-                        description: Network defines the KCC ComputeNetwork resource.
-                        properties:
-                          metadata:
-                            description: Metadata for the KCC resource.
-                            type: object
-                          spec:
-                            description: Spec is the desired KCC resource spec, passed
-                              through as raw JSON.
-                            x-kubernetes-preserve-unknown-fields: true
-                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
                       subnetwork:
-                        description: Subnetwork defines the KCC ComputeSubnetwork
-                          resource.
-                        properties:
-                          metadata:
-                            description: Metadata for the KCC resource.
-                            type: object
-                          spec:
-                            description: Spec is the desired KCC resource spec, passed
-                              through as raw JSON.
-                            x-kubernetes-preserve-unknown-fields: true
-                        type: object
-                    required:
-                    - network
-                    - subnetwork
+                        x-kubernetes-preserve-unknown-fields: true
                     type: object
                 required:
                 - spec

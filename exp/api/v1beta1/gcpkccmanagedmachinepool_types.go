@@ -18,6 +18,7 @@ package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 const (
@@ -27,8 +28,11 @@ const (
 
 // GCPKCCManagedMachinePoolSpec defines the desired state of GCPKCCManagedMachinePool.
 type GCPKCCManagedMachinePoolSpec struct {
-	// NodePool defines the KCC ContainerNodePool resource.
-	NodePool GCPKCCContainerNodePoolResource `json:"nodePool"`
+	// NodePool defines the KCC ContainerNodePool resource (metadata + spec as raw JSON).
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	NodePool *runtime.RawExtension `json:"nodePool,omitempty"`
 
 	// ProviderIDList are the provider IDs of instances in the node pool.
 	// +optional

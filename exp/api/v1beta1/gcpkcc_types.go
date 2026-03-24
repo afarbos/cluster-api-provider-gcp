@@ -16,11 +16,6 @@ limitations under the License.
 
 package v1beta1
 
-import (
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-)
-
 // KCCResourceRef is a reference to a KCC resource by name.
 type KCCResourceRef struct {
 	// Name is the name of the referenced KCC resource.
@@ -35,58 +30,4 @@ type KCCSecondaryIPRange struct {
 
 	// IpCidrRange is the range of IP addresses for this secondary range.
 	IpCidrRange string `json:"ipCidrRange"`
-}
-
-// --- Resource wrappers for KCC resources ---
-
-// GCPKCCNetworkResource wraps a KCC ComputeNetwork spec with metadata.
-type GCPKCCNetworkResource struct {
-	// Metadata for the KCC resource.
-	// +optional
-	Metadata metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	// Spec is the desired KCC resource spec, passed through as raw JSON.
-	// +optional
-	// +kubebuilder:pruning:PreserveUnknownFields
-	// +kubebuilder:validation:Schemaless
-	Spec *runtime.RawExtension `json:"spec,omitempty"`
-}
-
-// GCPKCCSubnetworkResource wraps a KCC ComputeSubnetwork spec with metadata.
-type GCPKCCSubnetworkResource struct {
-	// Metadata for the KCC resource.
-	// +optional
-	Metadata metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	// Spec is the desired KCC resource spec, passed through as raw JSON.
-	// +optional
-	// +kubebuilder:pruning:PreserveUnknownFields
-	// +kubebuilder:validation:Schemaless
-	Spec *runtime.RawExtension `json:"spec,omitempty"`
-}
-
-// GCPKCCContainerClusterResource wraps a KCC ContainerCluster spec with metadata.
-type GCPKCCContainerClusterResource struct {
-	// Metadata for the KCC resource.
-	// +optional
-	Metadata metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	// Spec is the desired KCC resource spec, passed through as raw JSON.
-	// +optional
-	// +kubebuilder:pruning:PreserveUnknownFields
-	// +kubebuilder:validation:Schemaless
-	Spec *runtime.RawExtension `json:"spec,omitempty"`
-}
-
-// GCPKCCContainerNodePoolResource wraps a KCC ContainerNodePool spec with metadata.
-type GCPKCCContainerNodePoolResource struct {
-	// Metadata for the KCC resource.
-	// +optional
-	Metadata metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	// Spec is the desired KCC resource spec, passed through as raw JSON.
-	// +optional
-	// +kubebuilder:pruning:PreserveUnknownFields
-	// +kubebuilder:validation:Schemaless
-	Spec *runtime.RawExtension `json:"spec,omitempty"`
 }

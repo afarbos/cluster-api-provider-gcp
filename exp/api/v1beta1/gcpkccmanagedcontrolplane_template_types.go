@@ -18,6 +18,7 @@ package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // GCPKCCManagedControlPlaneTemplateSpec defines the desired state of GCPKCCManagedControlPlaneTemplate.
@@ -57,8 +58,10 @@ type GCPKCCManagedControlPlaneTemplateResource struct {
 
 // GCPKCCManagedControlPlaneTemplateResourceSpec defines the desired state of GCPKCCManagedControlPlane for use in a template.
 type GCPKCCManagedControlPlaneTemplateResourceSpec struct {
-	// ContainerCluster defines the KCC ContainerCluster resource.
-	ContainerCluster GCPKCCContainerClusterResource `json:"containerCluster"`
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	ContainerCluster *runtime.RawExtension `json:"containerCluster,omitempty"`
 
 	// Version is the Kubernetes version for the control plane.
 	// +optional
