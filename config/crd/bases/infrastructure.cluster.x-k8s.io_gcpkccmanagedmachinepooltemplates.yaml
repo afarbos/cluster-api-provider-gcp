@@ -1,0 +1,212 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: gcpkccmanagedmachinepooltemplates.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: GCPKCCManagedMachinePoolTemplate
+    listKind: GCPKCCManagedMachinePoolTemplateList
+    plural: gcpkccmanagedmachinepooltemplates
+    shortNames:
+    - gcpkccmmpt
+    singular: gcpkccmanagedmachinepooltemplate
+  scope: Namespaced
+  versions:
+  - name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: GCPKCCManagedMachinePoolTemplate is the Schema for the GCPKCCManagedMachinePoolTemplates
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GCPKCCManagedMachinePoolTemplateSpec defines the desired
+              state of GCPKCCManagedMachinePoolTemplate.
+            properties:
+              template:
+                description: GCPKCCManagedMachinePoolTemplateResource describes the
+                  data needed to create an GCPKCCManagedMachinePool from a template.
+                properties:
+                  spec:
+                    description: GCPKCCManagedMachinePoolTemplateResourceSpec defines
+                      the desired state of GCPKCCManagedMachinePool for use in a template.
+                    properties:
+                      nodePool:
+                        description: NodePool defines the KCC ContainerNodePool resource.
+                        properties:
+                          metadata:
+                            description: Metadata for the KCC ContainerNodePool resource.
+                            properties:
+                              annotations:
+                                additionalProperties:
+                                  type: string
+                                description: Annotations is an optional set of annotations
+                                  on the KCC resource.
+                                type: object
+                              labels:
+                                additionalProperties:
+                                  type: string
+                                description: Labels is an optional set of labels on
+                                  the KCC resource.
+                                type: object
+                              name:
+                                description: Name is the name of the KCC resource.
+                                type: string
+                              namespace:
+                                description: Namespace is the namespace of the KCC
+                                  resource.
+                                type: string
+                            type: object
+                          spec:
+                            description: Spec defines the desired state of the KCC
+                              ContainerNodePool.
+                            properties:
+                              additionalConfig:
+                                description: AdditionalConfig allows passing additional
+                                  KCC fields not covered by the typed schema.
+                                x-kubernetes-preserve-unknown-fields: true
+                              autoscaling:
+                                description: Autoscaling configures autoscaling for
+                                  the node pool.
+                                properties:
+                                  enabled:
+                                    description: Enabled controls whether autoscaling
+                                      is enabled.
+                                    type: boolean
+                                  maxNodeCount:
+                                    description: MaxNodeCount is the maximum number
+                                      of nodes in the pool.
+                                    format: int32
+                                    type: integer
+                                  minNodeCount:
+                                    description: MinNodeCount is the minimum number
+                                      of nodes in the pool.
+                                    format: int32
+                                    type: integer
+                                type: object
+                              clusterRef:
+                                description: ClusterRef is a reference to the ContainerCluster
+                                  this pool belongs to.
+                                properties:
+                                  name:
+                                    description: Name is the name of the referenced
+                                      KCC resource.
+                                    type: string
+                                type: object
+                              initialNodeCount:
+                                description: InitialNodeCount is the initial number
+                                  of nodes for the pool.
+                                format: int32
+                                type: integer
+                              location:
+                                description: Location is the region or zone for the
+                                  node pool.
+                                type: string
+                              management:
+                                description: Management specifies node management
+                                  options (auto-upgrade, auto-repair).
+                                properties:
+                                  autoRepair:
+                                    description: AutoRepair specifies whether the
+                                      node auto-repair is enabled.
+                                    type: boolean
+                                  autoUpgrade:
+                                    description: AutoUpgrade specifies whether node
+                                      auto-upgrade is enabled.
+                                    type: boolean
+                                type: object
+                              nodeConfig:
+                                description: NodeConfig defines the configuration
+                                  of each node in the pool.
+                                properties:
+                                  diskSizeGb:
+                                    description: DiskSizeGb is the size of the disk
+                                      attached to each node, specified in GB.
+                                    format: int32
+                                    type: integer
+                                  diskType:
+                                    description: DiskType is the type of the disk
+                                      attached to each node.
+                                    type: string
+                                  imageType:
+                                    description: ImageType is the image type to use
+                                      for nodes.
+                                    type: string
+                                  labels:
+                                    additionalProperties:
+                                      type: string
+                                    description: Labels is the map of Kubernetes labels
+                                      applied to each node.
+                                    type: object
+                                  machineType:
+                                    description: MachineType is the Google Compute
+                                      Engine machine type.
+                                    type: string
+                                  oauthScopes:
+                                    description: OauthScopes is the set of Google
+                                      API scopes available on all nodes.
+                                    items:
+                                      type: string
+                                    type: array
+                                  serviceAccountRef:
+                                    description: ServiceAccountRef is a reference
+                                      to the service account to be used by nodes.
+                                    properties:
+                                      name:
+                                        description: Name is the name of the referenced
+                                          KCC resource.
+                                        type: string
+                                    type: object
+                                  tags:
+                                    description: Tags is the list of instance tags
+                                      applied to each node.
+                                    items:
+                                      type: string
+                                    type: array
+                                type: object
+                              nodeLocations:
+                                description: NodeLocations is the list of zones in
+                                  which the node pool's nodes should be located.
+                                items:
+                                  type: string
+                                type: array
+                              version:
+                                description: Version is the Kubernetes version for
+                                  the nodes.
+                                type: string
+                            type: object
+                        type: object
+                    required:
+                    - nodePool
+                    type: object
+                required:
+                - spec
+                type: object
+            required:
+            - template
+            type: object
+        type: object
+    served: true
+    storage: true

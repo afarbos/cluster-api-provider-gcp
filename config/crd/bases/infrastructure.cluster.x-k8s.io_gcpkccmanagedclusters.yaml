@@ -1,0 +1,312 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: gcpkccmanagedclusters.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: GCPKCCManagedCluster
+    listKind: GCPKCCManagedClusterList
+    plural: gcpkccmanagedclusters
+    shortNames:
+    - gcpkccmc
+    singular: gcpkccmanagedcluster
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: Cluster to which this GCPKCCManagedCluster belongs
+      jsonPath: .metadata.labels.cluster\.x-k8s\.io/cluster-name
+      name: Cluster
+      type: string
+    - description: Cluster infrastructure is ready
+      jsonPath: .status.ready
+      name: Ready
+      type: string
+    - description: KCC ComputeNetwork name
+      jsonPath: .status.networkName
+      name: Network
+      type: string
+    - description: Time duration since creation
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: GCPKCCManagedCluster is the Schema for the gcpkccmanagedclusters
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GCPKCCManagedClusterSpec defines the desired state of GCPKCCManagedCluster.
+            properties:
+              controlPlaneEndpoint:
+                description: ControlPlaneEndpoint represents the endpoint used to
+                  communicate with the control plane.
+                properties:
+                  host:
+                    description: host is the hostname on which the API server is serving.
+                    maxLength: 512
+                    type: string
+                  port:
+                    description: port is the port on which the API server is serving.
+                    format: int32
+                    type: integer
+                required:
+                - host
+                - port
+                type: object
+              network:
+                description: Network defines the KCC ComputeNetwork resource.
+                properties:
+                  metadata:
+                    description: Metadata for the KCC ComputeNetwork resource.
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        description: Annotations is an optional set of annotations
+                          on the KCC resource.
+                        type: object
+                      labels:
+                        additionalProperties:
+                          type: string
+                        description: Labels is an optional set of labels on the KCC
+                          resource.
+                        type: object
+                      name:
+                        description: Name is the name of the KCC resource.
+                        type: string
+                      namespace:
+                        description: Namespace is the namespace of the KCC resource.
+                        type: string
+                    type: object
+                  spec:
+                    description: Spec defines the desired state of the KCC ComputeNetwork.
+                    properties:
+                      additionalConfig:
+                        description: |-
+                          AdditionalConfig allows passing additional KCC fields not covered by the typed schema.
+                          These fields are merged into the KCC resource spec at reconcile time.
+                        x-kubernetes-preserve-unknown-fields: true
+                      autoCreateSubnetworks:
+                        description: AutoCreateSubnetworks controls whether to create
+                          a subnetwork for each region automatically.
+                        type: boolean
+                      description:
+                        description: Description is a human-readable description of
+                          the network.
+                        type: string
+                      routingMode:
+                        description: 'RoutingMode is the network-wide routing mode
+                          to use. Possible values: REGIONAL, GLOBAL.'
+                        type: string
+                    type: object
+                type: object
+              subnetwork:
+                description: Subnetwork defines the KCC ComputeSubnetwork resource.
+                properties:
+                  metadata:
+                    description: Metadata for the KCC ComputeSubnetwork resource.
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        description: Annotations is an optional set of annotations
+                          on the KCC resource.
+                        type: object
+                      labels:
+                        additionalProperties:
+                          type: string
+                        description: Labels is an optional set of labels on the KCC
+                          resource.
+                        type: object
+                      name:
+                        description: Name is the name of the KCC resource.
+                        type: string
+                      namespace:
+                        description: Namespace is the namespace of the KCC resource.
+                        type: string
+                    type: object
+                  spec:
+                    description: Spec defines the desired state of the KCC ComputeSubnetwork.
+                    properties:
+                      additionalConfig:
+                        description: AdditionalConfig allows passing additional KCC
+                          fields not covered by the typed schema.
+                        x-kubernetes-preserve-unknown-fields: true
+                      description:
+                        description: Description is a human-readable description of
+                          the subnetwork.
+                        type: string
+                      ipCidrRange:
+                        description: IpCidrRange is the range of internal addresses
+                          owned by this subnetwork.
+                        type: string
+                      networkRef:
+                        description: NetworkRef is a reference to the network this
+                          subnetwork belongs to.
+                        properties:
+                          name:
+                            description: Name is the name of the referenced KCC resource.
+                            type: string
+                        type: object
+                      region:
+                        description: Region is the GCP region for this subnetwork.
+                        type: string
+                      secondaryIpRange:
+                        description: SecondaryIpRange defines secondary IP ranges
+                          for pods and services.
+                        items:
+                          description: KCCSecondaryIPRange defines a secondary IP
+                            range for a subnetwork.
+                          properties:
+                            ipCidrRange:
+                              description: IpCidrRange is the range of IP addresses
+                                for this secondary range.
+                              type: string
+                            rangeName:
+                              description: RangeName is the name identifying the secondary
+                                range.
+                              type: string
+                          required:
+                          - ipCidrRange
+                          - rangeName
+                          type: object
+                        type: array
+                    type: object
+                type: object
+            required:
+            - network
+            - subnetwork
+            type: object
+          status:
+            description: GCPKCCManagedClusterStatus defines the observed state of
+              GCPKCCManagedCluster.
+            properties:
+              conditions:
+                description: Conditions defines current state of the GCPKCCManagedCluster.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              failureDomains:
+                additionalProperties:
+                  description: |-
+                    FailureDomainSpec is the Schema for Cluster API failure domains.
+                    It allows controllers to understand how many failure domains a cluster can optionally span across.
+                  properties:
+                    attributes:
+                      additionalProperties:
+                        type: string
+                      description: attributes is a free form map of attributes an
+                        infrastructure provider might use or require.
+                      type: object
+                    controlPlane:
+                      description: controlPlane determines if this failure domain
+                        is suitable for use by control plane machines.
+                      type: boolean
+                  type: object
+                description: FailureDomains defines the failure domains for the cluster.
+                type: object
+              initialization:
+                description: Initialization contains fields that track the status
+                  of cluster initialization.
+                properties:
+                  provisioned:
+                    description: Provisioned indicates that the infrastructure has
+                      been provisioned.
+                    type: boolean
+                type: object
+              networkName:
+                description: NetworkName is the name of the created KCC ComputeNetwork
+                  resource.
+                type: string
+              ready:
+                default: false
+                description: Ready indicates that the cluster infrastructure is ready.
+                type: boolean
+              subnetworkName:
+                description: SubnetworkName is the name of the created KCC ComputeSubnetwork
+                  resource.
+                type: string
+            required:
+            - ready
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

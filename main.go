@@ -261,6 +261,34 @@ func setupReconcilers(ctx context.Context, mgr ctrl.Manager) error {
 		}
 	}
 
+	if feature.Gates.Enabled(feature.ConfigConnector) {
+		setupLog.Info("Enabling Config Connector reconcilers")
+
+		if err := (&expcontrollers.GCPKCCManagedClusterReconciler{
+			Client:           mgr.GetClient(),
+			ReconcileTimeout: reconcileTimeout,
+			WatchFilterValue: watchFilterValue,
+		}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: gcpClusterConcurrency}); err != nil {
+			return fmt.Errorf("setting up GCPKCCManagedCluster controller: %w", err)
+		}
+
+		if err := (&expcontrollers.GCPKCCManagedControlPlaneReconciler{
+			Client:           mgr.GetClient(),
+			ReconcileTimeout: reconcileTimeout,
+			WatchFilterValue: watchFilterValue,
+		}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: gcpClusterConcurrency}); err != nil {
+			return fmt.Errorf("setting up GCPKCCManagedControlPlane controller: %w", err)
+		}
+
+		if err := (&expcontrollers.GCPKCCManagedMachinePoolReconciler{
+			Client:           mgr.GetClient(),
+			ReconcileTimeout: reconcileTimeout,
+			WatchFilterValue: watchFilterValue,
+		}).SetupWithManager(ctx, mgr, controller.Options{MaxConcurrentReconciles: gcpMachineConcurrency}); err != nil {
+			return fmt.Errorf("setting up GCPKCCManagedMachinePool controller: %w", err)
+		}
+	}
+
 	return nil
 }
 

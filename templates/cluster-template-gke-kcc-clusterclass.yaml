@@ -1,0 +1,89 @@
+apiVersion: cluster.x-k8s.io/v1beta1
+kind: ClusterClass
+metadata:
+  name: ${CLUSTER_CLASS_NAME}
+  namespace: default
+spec:
+  controlPlane:
+    ref:
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+      kind: GCPKCCManagedControlPlaneTemplate
+      name: ${CLUSTER_NAME}-control-plane
+  infrastructure:
+    ref:
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+      kind: GCPKCCManagedClusterTemplate
+      name: ${CLUSTER_NAME}
+  workers:
+    machinePools:
+    - class: default-worker
+      template:
+        bootstrap:
+          ref:
+            apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+            kind: GKEConfigTemplate
+            name: ${CLUSTER_NAME}-pool0
+        infrastructure:
+          ref:
+            apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+            kind: GCPKCCManagedMachinePoolTemplate
+            name: ${CLUSTER_NAME}-pool0
+---
+kind: GCPKCCManagedControlPlaneTemplate
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+metadata:
+  name: "${CLUSTER_NAME}-control-plane"
+spec:
+  template:
+    spec:
+      containerCluster:
+        metadata:
+          annotations:
+            cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
+        spec:
+          location: "${GCP_REGION}"
+      version: "${KUBERNETES_VERSION}"
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: GCPKCCManagedClusterTemplate
+metadata:
+  name: ${CLUSTER_NAME}
+spec:
+  template:
+    spec:
+      network:
+        metadata:
+          annotations:
+            cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
+      subnetwork:
+        metadata:
+          annotations:
+            cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
+        spec:
+          ipCidrRange: "10.0.0.0/20"
+          region: "${GCP_REGION}"
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+kind: GCPKCCManagedMachinePoolTemplate
+metadata:
+  name: ${CLUSTER_NAME}-pool0
+  namespace: default
+spec:
+  template:
+    spec:
+      nodePool:
+        metadata:
+          annotations:
+            cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
+        spec:
+          nodeConfig:
+            machineType: "${GCP_MACHINE_TYPE:=e2-medium}"
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+kind: GKEConfigTemplate
+metadata:
+  name: ${CLUSTER_NAME}-pool0
+  namespace: default
+spec:
+  template:
+    spec: {}

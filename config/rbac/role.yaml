@@ -79,9 +79,38 @@ rules:
   - list
   - watch
 - apiGroups:
+  - compute.cnrm.cloud.google.com
+  resources:
+  - computenetworks
+  - computesubnetworks
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - container.cnrm.cloud.google.com
+  resources:
+  - containerclusters
+  - containernodepools
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - infrastructure.cluster.x-k8s.io
   resources:
   - gcpclusters
+  - gcpkccmanagedclusters
+  - gcpkccmanagedcontrolplanes
+  - gcpkccmanagedmachinepools
   - gcpmachines
   - gcpmanagedclusters
   - gcpmanagedcontrolplanes
@@ -98,6 +127,9 @@ rules:
   - infrastructure.cluster.x-k8s.io
   resources:
   - gcpclusters/status
+  - gcpkccmanagedclusters/status
+  - gcpkccmanagedcontrolplanes/status
+  - gcpkccmanagedmachinepools/status
   - gcpmachinepools/status
   - gcpmachines/status
   - gcpmanagedclusters/status
@@ -110,6 +142,17 @@ rules:
 - apiGroups:
   - infrastructure.cluster.x-k8s.io
   resources:
+  - gcpkccmanagedclusters/finalizers
+  - gcpkccmanagedcontrolplanes/finalizers
+  - gcpkccmanagedmachinepools/finalizers
+  - gcpmanagedclusters/finalizers
+  - gcpmanagedcontrolplanes/finalizers
+  - gcpmanagedmachinepools/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - infrastructure.cluster.x-k8s.io
+  resources:
   - gcpmachinepools
   verbs:
   - delete
@@ -118,11 +161,3 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - infrastructure.cluster.x-k8s.io
-  resources:
-  - gcpmanagedclusters/finalizers
-  - gcpmanagedcontrolplanes/finalizers
-  - gcpmanagedmachinepools/finalizers
-  verbs:
-  - update

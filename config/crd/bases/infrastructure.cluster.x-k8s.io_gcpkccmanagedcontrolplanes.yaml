@@ -1,0 +1,335 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: gcpkccmanagedcontrolplanes.infrastructure.cluster.x-k8s.io
+spec:
+  group: infrastructure.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: GCPKCCManagedControlPlane
+    listKind: GCPKCCManagedControlPlaneList
+    plural: gcpkccmanagedcontrolplanes
+    shortNames:
+    - gcpkccmcp
+    singular: gcpkccmanagedcontrolplane
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: Cluster to which this GCPKCCManagedControlPlane belongs
+      jsonPath: .metadata.labels.cluster\.x-k8s\.io/cluster-name
+      name: Cluster
+      type: string
+    - description: Control plane is ready
+      jsonPath: .status.ready
+      name: Ready
+      type: string
+    - description: Kubernetes version
+      jsonPath: .status.version
+      name: Version
+      type: string
+    - description: API Endpoint
+      jsonPath: .spec.controlPlaneEndpoint.host
+      name: Endpoint
+      priority: 1
+      type: string
+    - description: Time duration since creation
+      jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: GCPKCCManagedControlPlane is the Schema for the gcpkccmanagedcontrolplanes
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GCPKCCManagedControlPlaneSpec defines the desired state of
+              GCPKCCManagedControlPlane.
+            properties:
+              containerCluster:
+                description: ContainerCluster defines the KCC ContainerCluster resource.
+                properties:
+                  metadata:
+                    description: Metadata for the KCC ContainerCluster resource.
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        description: Annotations is an optional set of annotations
+                          on the KCC resource.
+                        type: object
+                      labels:
+                        additionalProperties:
+                          type: string
+                        description: Labels is an optional set of labels on the KCC
+                          resource.
+                        type: object
+                      name:
+                        description: Name is the name of the KCC resource.
+                        type: string
+                      namespace:
+                        description: Namespace is the namespace of the KCC resource.
+                        type: string
+                    type: object
+                  spec:
+                    description: Spec defines the desired state of the KCC ContainerCluster.
+                    properties:
+                      additionalConfig:
+                        description: AdditionalConfig allows passing additional KCC
+                          fields not covered by the typed schema.
+                        x-kubernetes-preserve-unknown-fields: true
+                      initialNodeCount:
+                        description: InitialNodeCount is the number of nodes to create
+                          in this cluster's default node pool.
+                        format: int32
+                        type: integer
+                      ipAllocationPolicy:
+                        description: IpAllocationPolicy configures IP allocation for
+                          pods and services.
+                        properties:
+                          clusterSecondaryRangeName:
+                            description: ClusterSecondaryRangeName is the name of
+                              the secondary range for pod IPs.
+                            type: string
+                          servicesSecondaryRangeName:
+                            description: ServicesSecondaryRangeName is the name of
+                              the secondary range for service IPs.
+                            type: string
+                        type: object
+                      location:
+                        description: Location is the region or zone for the GKE cluster.
+                        type: string
+                      loggingService:
+                        description: LoggingService is the logging service the cluster
+                          should use.
+                        type: string
+                      masterAuthorizedNetworksConfig:
+                        description: MasterAuthorizedNetworksConfig configures master
+                          authorized networks.
+                        properties:
+                          cidrBlocks:
+                            description: CidrBlocks defines the list of CIDR blocks
+                              allowed to access the master.
+                            items:
+                              description: KCCMasterAuthorizedNetworksCidrBlock defines
+                                a CIDR block for master authorized networks.
+                              properties:
+                                cidrBlock:
+                                  description: CidrBlock is an external network that
+                                    can access the master.
+                                  type: string
+                                displayName:
+                                  description: DisplayName is a display name for the
+                                    CIDR block.
+                                  type: string
+                              type: object
+                            type: array
+                        type: object
+                      minMasterVersion:
+                        description: MinMasterVersion is the minimum version of the
+                          master. Managed by CAPI version override.
+                        type: string
+                      monitoringService:
+                        description: MonitoringService is the monitoring service the
+                          cluster should use.
+                        type: string
+                      networkRef:
+                        description: NetworkRef is a reference to the VPC network
+                          for this cluster.
+                        properties:
+                          name:
+                            description: Name is the name of the referenced KCC resource.
+                            type: string
+                        type: object
+                      networkingMode:
+                        description: 'NetworkingMode configures the networking mode.
+                          Possible values: VPC_NATIVE, ROUTES.'
+                        type: string
+                      privateClusterConfig:
+                        description: PrivateClusterConfig configures private cluster
+                          settings.
+                        properties:
+                          enablePrivateEndpoint:
+                            description: EnablePrivateEndpoint controls whether the
+                              master's internal IP is used as the cluster endpoint.
+                            type: boolean
+                          enablePrivateNodes:
+                            description: EnablePrivateNodes controls whether nodes
+                              have internal IP addresses only.
+                            type: boolean
+                          masterIpv4CidrBlock:
+                            description: MasterIpv4CidrBlock is the IP range in CIDR
+                              notation for the master network.
+                            type: string
+                        type: object
+                      releaseChannel:
+                        description: ReleaseChannel configures the release channel
+                          for automatic upgrades.
+                        properties:
+                          channel:
+                            description: 'Channel is the release channel. Possible
+                              values: RAPID, REGULAR, STABLE, EXTENDED.'
+                            type: string
+                        type: object
+                      removeDefaultNodePool:
+                        description: RemoveDefaultNodePool controls whether to delete
+                          the default node pool after cluster creation.
+                        type: boolean
+                      subnetworkRef:
+                        description: SubnetworkRef is a reference to the VPC subnetwork
+                          for this cluster.
+                        properties:
+                          name:
+                            description: Name is the name of the referenced KCC resource.
+                            type: string
+                        type: object
+                      workloadIdentityConfig:
+                        description: WorkloadIdentityConfig configures workload identity
+                          for the cluster.
+                        properties:
+                          workloadPool:
+                            description: WorkloadPool is the workload identity pool.
+                            type: string
+                        type: object
+                    type: object
+                type: object
+              controlPlaneEndpoint:
+                description: ControlPlaneEndpoint represents the endpoint used to
+                  communicate with the control plane.
+                properties:
+                  host:
+                    description: host is the hostname on which the API server is serving.
+                    maxLength: 512
+                    type: string
+                  port:
+                    description: port is the port on which the API server is serving.
+                    format: int32
+                    type: integer
+                required:
+                - host
+                - port
+                type: object
+              version:
+                description: Version is the desired Kubernetes version. Overridden
+                  onto ContainerCluster.Spec.MinMasterVersion.
+                type: string
+            required:
+            - containerCluster
+            type: object
+          status:
+            description: GCPKCCManagedControlPlaneStatus defines the observed state
+              of GCPKCCManagedControlPlane.
+            properties:
+              clusterName:
+                description: ClusterName is the name of the KCC ContainerCluster resource.
+                type: string
+              conditions:
+                description: Conditions defines current state.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              externalManagedControlPlane:
+                description: ExternalManagedControlPlane indicates the control plane
+                  is externally managed. Always true.
+                type: boolean
+              initialization:
+                description: Initialization tracks control plane initialization.
+                properties:
+                  controlPlaneInitialized:
+                    description: ControlPlaneInitialized indicates the control plane
+                      is initialized.
+                    type: boolean
+                type: object
+              initialized:
+                description: Initialized indicates the control plane is available
+                  for initial contact.
+                type: boolean
+              ready:
+                default: false
+                description: Ready indicates that the control plane is ready.
+                type: boolean
+              version:
+                description: Version is the observed Kubernetes version of the control
+                  plane.
+                type: string
+            required:
+            - ready
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
