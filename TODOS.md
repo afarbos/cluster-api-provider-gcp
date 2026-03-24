@@ -138,6 +138,21 @@ See docs/proposals/config-connector-integration.md for full design.
 
 ## Design decisions (from review)
 
+## Post-Implementation Review (Addendum A1-A8)
+
+- [ ] **A1: Use CAPI v1beta2 condition constants** — Replace custom reasons with upstream `clusterv1.*Reason` constants (WaitingForClusterInfrastructureReadyReason, DeletingReason, ReadyReason, etc.). Keep KCC-specific condition types (KCCNetworkReady, etc.).
+- [ ] **A2: Use RawExtension for KCC specs** — Replace typed intermediate structs with `*runtime.RawExtension` for each KCC resource spec. Remove all passthrough-only types (KCCReleaseChannel, KCCWorkloadIdentityConfig, KCCPrivateClusterConfig, KCCMasterAuthorizedNetworksConfig, KCCNodePoolAutoscaling, KCCNodePoolManagement, KCCNodeConfig, etc.). Controller defaults/overrides operate by unmarshalling RawExtension → map, setting/overriding keys, marshalling back. Keep only KCCResourceRef, KCCSecondaryIPRange, KCCIPAllocationPolicy as helper types for override logic. ClusterClass patches work unchanged — JSON patches operate on raw JSON regardless of Go types (verified: CAPI webhook does NOT validate paths against CRD schema).
+- [ ] **A3: Default namespace on KCC resources** — Add `if Metadata.Namespace == "": set to ownerNamespace` in all apply*Defaults functions.
+- [ ] **A4: Define KCC GVK constants once** — Move GVK constants to API package (`exp/api/v1beta1/gcpkcc_conversion.go`). Remove duplicates from `gcpkcc_helpers.go`. Reference via `infrav1exp.*GVK`.
+- [ ] **A5: Use metav1.ObjectMeta** — Replace custom `KCCObjectMeta` with `metav1.ObjectMeta`. Update conversion, controllers, defaults.
+- [ ] **A6: Simplify deleteResource** — Rename `deleteKCCResourceIfExists` → `deleteResource`. Simplify to delete + handle NotFound. Move to `gcpkcc_helpers.go` as standalone function. Remove 3 method duplicates.
+- [ ] **A7: Kubeconfig with bearer token** — Replace gke-gcloud-auth-plugin exec credential with actual OAuth2 token from IAM Credentials API. Create lightweight credential helper in `exp/controllers/gcpkcc_credentials.go` that reads SA key from CAPG GCP secret.
+- [ ] **A8: Status.replicas from KCC nodeCount** — Set `cnrm.cloud.google.com/state-into-spec: merge` annotation on ContainerNodePool. Read `spec.initialNodeCount` from KCC resource for `status.replicas`. Document autoscaler limitation.
+
+---
+
+## Design Decisions
+
 - **Intermediate types over full KCC embedding**: CRD size risk with full KCC types; intermediate types give ClusterClass validation for common fields + passthrough for advanced fields
 - **Permanent coexistence**: KCC path coexists with existing GKE path; this is a proposal for the upstream project
 - **No scope pattern**: KCC controllers don't call GCP APIs directly (KCC handles that), so the scope pattern adds ceremony without value — deliberate divergence from existing CAPG controllers

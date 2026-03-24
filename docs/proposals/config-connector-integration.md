@@ -795,3 +795,144 @@ type GCPKCCContainerClusterSpec struct {
 - Permanent coexistence with existing GKE path (not a replacement)
 
 **VERDICT:** DESIGN REVISED — Ready for implementation. See TODOS.md for phased plan.
+
+---
+
+## Addendum: Post-Implementation Review Feedback
+
+After initial implementation and review, the following changes are required. These apply broadly across all files.
+
+### A1. Use upstream CAPI v1beta2 condition constants
+
+**Problem:** Custom condition reasons like `WaitingForKCCInfraClusterReason`, `WaitingForKCCControlPlaneReason`, `KCCResourceDeletingReason` duplicate upstream CAPI constants.
+
+**Change:** Replace custom reasons with upstream `clusterv1` constants from `sigs.k8s.io/cluster-api/api/core/v1beta2`:
+- `WaitingForKCCInfraClusterReason` → `clusterv1.WaitingForClusterInfrastructureReadyReason`
+- `WaitingForKCCControlPlaneReason` → `clusterv1.WaitingForControlPlaneInitializedReason`
+- `KCCResourceDeletingReason` → `clusterv1.DeletingReason`
+- `KCCResourceDeletedReason` → `clusterv1.DeletionCompletedReason`
+- `KCCDeletionTimeoutReason` → keep (no CAPI equivalent)
+- `KCCReconciliationTimeoutReason` → keep (no CAPI equivalent)
+- `KCCResourceCreatingReason` → keep (KCC-specific lifecycle state)
+- `KCCResourceReadyReason` → `clusterv1.ReadyReason`
+- `KCCResourceNotReadyReason` → `clusterv1.NotReadyReason`
+
+KCC-specific condition *types* (`KCCNetworkReadyCondition`, `KCCSubnetworkReadyCondition`, `KCCClusterReadyCondition`, `KCCNodePoolReadyCondition`) remain — CAPI has no GCP sub-resource equivalents.
+
+**Files:** `exp/api/v1beta1/gcpkcc_conditions.go`, all 3 controllers.
+
+### A2. Reduce intermediate types to controller-only fields, use RawExtension for KCC specs
+
+**Problem:** The intermediate types duplicate many KCC fields as typed Go structs (e.g., `KCCReleaseChannel`, `KCCPrivateClusterConfig`, `KCCNodePoolAutoscaling`). These are never used by controller defaults/overrides logic. The original concern was that ClusterClass patches would not work with `runtime.RawExtension` — but this is incorrect.
+
+**Analysis:** ClusterClass JSON patches operate on raw JSON at runtime via the `evanphx/json-patch` library (`sigs.k8s.io/cluster-api/internal/controllers/topology/cluster/patches/engine.go`). The ClusterClass webhook (`sigs.k8s.io/cluster-api/internal/webhooks/patch_validation.go`, `validateJSONPatches` line 320) only validates that:
+1. `op` is `add`/`replace`/`remove`
+2. `path` starts with `/spec`
+3. Array index restrictions
+4. Variable/template syntax
+
+**It does NOT validate paths against the CRD schema.** A patch like `/spec/template/spec/containerCluster/spec/releaseChannel/channel` works identically whether `releaseChannel` is a typed field or inside a `RawExtension`. The only difference is `kubectl explain` discoverability and apiserver-level field validation on create/update.
+
+**Change:** Make each KCC resource spec a `*runtime.RawExtension` instead of a large typed struct. Only keep typed fields that the controller must read/write for defaults and overrides:
+
+```go
+type GCPKCCContainerClusterResource struct {
+    Metadata metav1.ObjectMeta           `json:"metadata,omitempty"`
+    Spec     *runtime.RawExtension       `json:"spec,omitempty"`
+}
+```
+
+The controller applies defaults/overrides by:
+1. Unmarshalling `Spec` into `map[string]interface{}`
+2. Setting default values for missing keys (e.g., `location`, `initialNodeCount`, `networkRef`)
+3. Force-overriding CAPI fields (e.g., `minMasterVersion` from version)
+4. Marshalling back and passing to the KCC unstructured builder
+
+This eliminates all intermediate Go types except:
+- `KCCResourceRef` (used in defaults for `networkRef`, `subnetworkRef`, `clusterRef`)
+- `KCCSecondaryIPRange` (used in CIDR override logic)
+- `KCCIPAllocationPolicy` (used in CIDR override logic)
+
+The conversion layer simplifies dramatically — instead of mapping 30+ typed fields to `map[string]interface{}`, it just unmarshals the `RawExtension` directly and merges any controller-applied overrides.
+
+**Impact on ClusterClass:** No impact. Users write the same JSON patch paths targeting KCC field names (e.g., `/spec/template/spec/containerCluster/spec/releaseChannel/channel`). These work because JSON patches operate on the raw JSON document regardless of Go type structure.
+
+**Impact on CRD size:** Significant reduction. Each KCC resource spec becomes a single opaque object field instead of 20+ typed fields.
+
+**Files:** `exp/api/v1beta1/gcpkcc_types.go`, `exp/api/v1beta1/gcpkcc_conversion.go`, all controllers, defaults, template types.
+
+### A3. Default namespace on KCC resources
+
+**Problem:** KCC resources need a namespace set but it was not defaulted.
+
+**Change:** In each `apply*Defaults` function, add:
+```go
+if res.Metadata.Namespace == "" {
+    res.Metadata.Namespace = ownerNamespace
+}
+```
+
+**Files:** `exp/controllers/gcpkcc_defaults.go`.
+
+### A4. Define KCC GVK constants once
+
+**Problem:** KCC GVK strings (`compute.cnrm.cloud.google.com`, `container.cnrm.cloud.google.com`) appear in both `gcpkcc_helpers.go` (as `var` constants) and `gcpkcc_conversion.go` (as inline strings).
+
+**Change:** Move GVK constants to `exp/api/v1beta1/gcpkcc_conversion.go` (API package — accessible to both API and controllers). Reference them from `gcpkcc_helpers.go` and all controllers via the `infrav1exp` import.
+
+**Files:** `exp/api/v1beta1/gcpkcc_conversion.go`, `exp/controllers/gcpkcc_helpers.go`.
+
+### A5. Use `metav1.ObjectMeta` for KCC resource metadata
+
+**Problem:** Custom `KCCObjectMeta` struct duplicates standard Kubernetes metadata fields.
+
+**Change:** Replace `KCCObjectMeta` with `metav1.ObjectMeta` from `k8s.io/apimachinery/pkg/apis/meta/v1`. This is the standard Kubernetes type that users already know. While it exposes extra fields (`UID`, `ResourceVersion`, etc.), these are ignored at conversion time — only `Name`, `Namespace`, `Annotations`, `Labels` are used.
+
+Update conversion functions to read from `metav1.ObjectMeta` fields instead of `KCCObjectMeta`.
+
+**Files:** `exp/api/v1beta1/gcpkcc_types.go`, `exp/api/v1beta1/gcpkcc_conversion.go`, all controllers, all defaults.
+
+### A6. Simplify and deduplicate `deleteKCCResourceIfExists`
+
+**Problem:** The function is defined as a method 3 times (once per controller), and the get-then-delete pattern is unnecessary.
+
+**Change:**
+1. Rename to `deleteResource` (generic — works for any unstructured resource)
+2. Simplify: just call `Delete()` and handle `IsNotFound` error (no need to `Get` first)
+3. Move to `gcpkcc_helpers.go` as a standalone function: `func deleteResource(ctx context.Context, c client.Client, gvk schema.GroupVersionKind, name, namespace string) error`
+4. Remove the 3 method definitions from controllers
+
+**Files:** `exp/controllers/gcpkcc_helpers.go`, all 3 controllers.
+
+### A7. Kubeconfig: use bearer token from CAPG GCP credentials
+
+**Problem:** Current implementation uses `gke-gcloud-auth-plugin` exec credential which requires the plugin installed on the user's machine and doesn't work for CAPI infrastructure.
+
+**Change:** Adapt the existing CAPG kubeconfig generation pattern from `cloud/services/container/clusters/kubeconfig.go`:
+1. Read GCP service account credentials from the CAPG credentials Secret (same secret the existing provider uses, referenced via the management cluster configuration)
+2. Create an IAM Credentials API client
+3. Call `GenerateAccessToken` to get an OAuth2 bearer token
+4. Build kubeconfig with `Token` field (not `Exec`)
+5. Store in `<cluster>-kubeconfig` secret per CAPI convention
+
+Create a lightweight credential helper in `exp/controllers/gcpkcc_credentials.go` that:
+- Reads SA key JSON from a Kubernetes Secret or falls back to Application Default Credentials
+- Creates an `IamCredentialsClient`
+- Exposes `GenerateAccessToken(ctx, clientEmail)` method
+
+This avoids the full scope pattern while reusing the proven token generation flow.
+
+**Files:** new `exp/controllers/gcpkcc_credentials.go`, `exp/controllers/gcpkccmanagedcontrolplane_controller.go`.
+
+### A8. Status.replicas from KCC nodeCount with state-into-spec: merge
+
+**Problem:** `status.replicas` was set from `MachinePool.Spec.Replicas` (desired) rather than actual node count from GCP.
+
+**Change:**
+1. Set annotation `cnrm.cloud.google.com/state-into-spec: merge` on ContainerNodePool KCC resources (in conversion or defaults)
+2. Read `spec.initialNodeCount` from the KCC ContainerNodePool unstructured resource (KCC populates this from GCP state via the merge annotation)
+3. Use that value for `status.replicas`
+
+**Limitation (document):** With autoscaling enabled, `initialNodeCount` may not reflect the actual current node count. This is a known KCC limitation. For accurate counts with autoscaling, a future enhancement could read instance group sizes via the GCP Compute API.
+
+**Files:** `exp/controllers/gcpkccmanagedmachinepool_controller.go`, `exp/controllers/gcpkcc_defaults.go` or `gcpkcc_conversion.go` (for the annotation).
