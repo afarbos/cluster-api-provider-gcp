@@ -116,12 +116,12 @@ func (r *GCPKCCManagedControlPlaneReconciler) Reconcile(ctx context.Context, req
 func (r *GCPKCCManagedControlPlaneReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	log := ctrl.LoggerFrom(ctx)
 
-	if err := checkKCCCRDsPresent(ctx, mgr.GetClient(), containerClusterGVK); err != nil {
+	if err := checkKCCCRDsPresent(ctx, mgr.GetClient(), infrav1exp.ContainerClusterGVK); err != nil {
 		return err
 	}
 
 	containerClusterObj := &unstructured.Unstructured{}
-	containerClusterObj.SetGroupVersionKind(containerClusterGVK)
+	containerClusterObj.SetGroupVersionKind(infrav1exp.ContainerClusterGVK)
 
 	c, err := ctrl.NewControllerManagedBy(mgr).
 		WithOptions(options).
@@ -172,7 +172,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 		apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{
 			Type:               infrav1exp.KCCClusterReadyCondition,
 			Status:             metav1.ConditionFalse,
-			Reason:             infrav1exp.WaitingForKCCInfraClusterReason,
+			Reason:             clusterv1.WaitingForClusterInfrastructureReadyReason,
 			Message:            "Waiting for infrastructure cluster to be provisioned",
 			LastTransitionTime: metav1.Now(),
 		})
@@ -180,17 +180,22 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 	}
 
 	// 4. Apply defaults.
-	applyContainerClusterDefaults(
+	if err := applyContainerClusterDefaults(
 		&kccCP.Spec.ContainerCluster,
 		cluster.Name,
 		kccInfraCluster.Status.NetworkName,
 		kccInfraCluster.Status.SubnetworkName,
-		kccInfraCluster.Spec.Subnetwork.Spec.Region,
-	)
+		getSpecString(kccInfraCluster.Spec.Subnetwork.Spec, "region"),
+		kccCP.Namespace,
+	); err != nil {
+		return ctrl.Result{}, fmt.Errorf("applying cluster defaults: %w", err)
+	}
 
 	// 5. Apply overrides: version from kccCP.Spec.Version.
 	if kccCP.Spec.Version != nil {
-		applyClusterVersionOverride(&kccCP.Spec.ContainerCluster, *kccCP.Spec.Version)
+		if err := applyClusterVersionOverride(&kccCP.Spec.ContainerCluster, *kccCP.Spec.Version); err != nil {
+			return ctrl.Result{}, fmt.Errorf("applying version override: %w", err)
+		}
 	}
 
 	// 6. Convert to unstructured ContainerCluster.
@@ -215,7 +220,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 
 	// 8. Check readiness.
 	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(containerClusterGVK)
+	existing.SetGroupVersionKind(infrav1exp.ContainerClusterGVK)
 	if err := r.Get(ctx, types.NamespacedName{Name: kccCP.Spec.ContainerCluster.Metadata.Name, Namespace: kccCP.Namespace}, existing); err != nil {
 		return ctrl.Result{}, fmt.Errorf("getting KCC ContainerCluster: %w", err)
 	}
@@ -252,7 +257,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 		apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{
 			Type:               infrav1exp.KCCClusterReadyCondition,
 			Status:             metav1.ConditionTrue,
-			Reason:             infrav1exp.KCCResourceReadyReason,
+			Reason:             clusterv1.ReadyReason,
 			LastTransitionTime: metav1.Now(),
 		})
 
@@ -268,7 +273,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 	apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{
 		Type:               infrav1exp.KCCClusterReadyCondition,
 		Status:             metav1.ConditionFalse,
-		Reason:             infrav1exp.KCCResourceNotReadyReason,
+		Reason:             clusterv1.NotReadyReason,
 		Message:            msg,
 		LastTransitionTime: metav1.Now(),
 	})
@@ -282,7 +287,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileDelete(ctx context.Contex
 	log.Info("Reconciling Delete GCPKCCManagedControlPlane")
 
 	// 1. Delete the ContainerCluster KCC resource.
-	gone, err := r.deleteKCCResourceIfExists(ctx, containerClusterGVK, kccCP.Spec.ContainerCluster.Metadata.Name, kccCP.Namespace)
+	gone, err := deleteResource(ctx, r.Client, infrav1exp.ContainerClusterGVK, kccCP.Spec.ContainerCluster.Metadata.Name, kccCP.Namespace)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("deleting KCC ContainerCluster: %w", err)
 	}
@@ -303,34 +308,6 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileDelete(ctx context.Contex
 	return ctrl.Result{}, nil
 }
 
-// deleteKCCResourceIfExists attempts to delete a KCC resource and returns true
-// if the resource no longer exists (either deleted or already gone).
-func (r *GCPKCCManagedControlPlaneReconciler) deleteKCCResourceIfExists(ctx context.Context, gvk schema.GroupVersionKind, name, namespace string) (bool, error) {
-	if name == "" {
-		return true, nil
-	}
-
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(gvk)
-
-	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, obj)
-	if err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			return true, nil
-		}
-		return false, fmt.Errorf("getting KCC resource %s/%s: %w", namespace, name, err)
-	}
-
-	if err := r.Delete(ctx, obj); err != nil {
-		if client.IgnoreNotFound(err) == nil {
-			return true, nil
-		}
-		return false, fmt.Errorf("deleting KCC resource %s/%s: %w", namespace, name, err)
-	}
-
-	return false, nil
-}
-
 // reconcileKubeconfig creates or updates the kubeconfig Secret for the cluster.
 func (r *GCPKCCManagedControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, kccCP *infrav1exp.GCPKCCManagedControlPlane, cluster *clusterv1.Cluster, endpoint, caCert string) error {
 	// Check if secret already exists.
@@ -349,7 +326,13 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileKubeconfig(ctx context.Co
 		return fmt.Errorf("decoding CA certificate: %w", err2)
 	}
 
-	// Build kubeconfig using gke-gcloud-auth-plugin exec credential.
+	// Generate a bearer token from Application Default Credentials.
+	token, err4 := generateGCPAccessToken(ctx)
+	if err4 != nil {
+		return fmt.Errorf("generating access token for kubeconfig: %w", err4)
+	}
+
+	// Build kubeconfig with bearer token.
 	contextName := fmt.Sprintf("gke_%s", cluster.Name)
 	kubeconfigData := clientcmdapi.Config{
 		Clusters: map[string]*clientcmdapi.Cluster{
@@ -366,12 +349,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileKubeconfig(ctx context.Co
 		},
 		AuthInfos: map[string]*clientcmdapi.AuthInfo{
 			contextName: {
-				Exec: &clientcmdapi.ExecConfig{
-					APIVersion:         "client.authentication.k8s.io/v1beta1",
-					Command:            "gke-gcloud-auth-plugin",
-					InstallHint:        "Install gke-gcloud-auth-plugin for use with kubectl by following https://cloud.google.com/blog/products/containers-kubernetes/kubectl-auth-changes-in-gke",
-					ProvideClusterInfo: true,
-				},
+				Token: token,
 			},
 		},
 		CurrentContext: contextName,

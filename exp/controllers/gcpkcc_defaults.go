@@ -17,76 +17,149 @@ limitations under the License.
 package controllers
 
 import (
-	"k8s.io/utils/ptr"
+	"encoding/json"
+	"fmt"
+
+	"k8s.io/apimachinery/pkg/runtime"
 
 	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
 )
+
+func specToMap(raw *runtime.RawExtension) (map[string]interface{}, error) {
+	if raw == nil || raw.Raw == nil {
+		return map[string]interface{}{}, nil
+	}
+	m := map[string]interface{}{}
+	if err := json.Unmarshal(raw.Raw, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func mapToRawExtension(m map[string]interface{}) (*runtime.RawExtension, error) {
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	return &runtime.RawExtension{Raw: raw}, nil
+}
+
+func setIfAbsent(m map[string]interface{}, key string, value interface{}) {
+	if _, ok := m[key]; !ok {
+		m[key] = value
+	}
+}
+
+// getSpecString extracts a string value from a RawExtension spec map.
+func getSpecString(raw *runtime.RawExtension, key string) string {
+	m, err := specToMap(raw)
+	if err != nil {
+		return ""
+	}
+	v, ok := m[key].(string)
+	if !ok {
+		return ""
+	}
+	return v
+}
 
 // --- Default functions (set only when field is empty/nil) ---
 
 // applyNetworkDefaults sets default values on the KCC ComputeNetwork resource
 // when fields are not already set by the user.
-func applyNetworkDefaults(network *infrav1exp.GCPKCCNetworkResource, clusterName string) {
+func applyNetworkDefaults(network *infrav1exp.GCPKCCNetworkResource, clusterName, ownerNamespace string) error {
 	if network.Metadata.Name == "" {
 		network.Metadata.Name = clusterName
 	}
-	if network.Spec.AutoCreateSubnetworks == nil {
-		network.Spec.AutoCreateSubnetworks = ptr.To(false)
+	if network.Metadata.Namespace == "" {
+		network.Metadata.Namespace = ownerNamespace
 	}
-	if network.Spec.RoutingMode == "" {
-		network.Spec.RoutingMode = "REGIONAL"
+	spec, err := specToMap(network.Spec)
+	if err != nil {
+		return fmt.Errorf("parsing network spec: %w", err)
 	}
+	setIfAbsent(spec, "autoCreateSubnetworks", false)
+	setIfAbsent(spec, "routingMode", "REGIONAL")
+	network.Spec, err = mapToRawExtension(spec)
+	return err
 }
 
 // applySubnetworkDefaults sets default values on the KCC ComputeSubnetwork
 // resource when fields are not already set by the user.
-func applySubnetworkDefaults(subnet *infrav1exp.GCPKCCSubnetworkResource, clusterName, networkName string) {
+func applySubnetworkDefaults(subnet *infrav1exp.GCPKCCSubnetworkResource, clusterName, networkName, ownerNamespace string) error {
 	if subnet.Metadata.Name == "" {
 		subnet.Metadata.Name = clusterName
 	}
-	if subnet.Spec.NetworkRef.Name == "" {
-		subnet.Spec.NetworkRef.Name = networkName
+	if subnet.Metadata.Namespace == "" {
+		subnet.Metadata.Namespace = ownerNamespace
 	}
+	spec, err := specToMap(subnet.Spec)
+	if err != nil {
+		return fmt.Errorf("parsing subnetwork spec: %w", err)
+	}
+	if _, ok := spec["networkRef"]; !ok {
+		spec["networkRef"] = map[string]interface{}{"name": networkName}
+	}
+	subnet.Spec, err = mapToRawExtension(spec)
+	return err
 }
 
 // applyContainerClusterDefaults sets default values on the KCC ContainerCluster
 // resource when fields are not already set by the user.
-func applyContainerClusterDefaults(cluster *infrav1exp.GCPKCCContainerClusterResource, clusterName, networkName, subnetworkName, subnetworkRegion string) {
+func applyContainerClusterDefaults(cluster *infrav1exp.GCPKCCContainerClusterResource, clusterName, networkName, subnetworkName, subnetworkRegion, ownerNamespace string) error {
 	if cluster.Metadata.Name == "" {
 		cluster.Metadata.Name = clusterName
 	}
-	if cluster.Spec.NetworkRef.Name == "" {
-		cluster.Spec.NetworkRef.Name = networkName
+	if cluster.Metadata.Namespace == "" {
+		cluster.Metadata.Namespace = ownerNamespace
 	}
-	if cluster.Spec.SubnetworkRef.Name == "" {
-		cluster.Spec.SubnetworkRef.Name = subnetworkName
+	spec, err := specToMap(cluster.Spec)
+	if err != nil {
+		return fmt.Errorf("parsing cluster spec: %w", err)
 	}
-	if cluster.Spec.InitialNodeCount == nil {
-		cluster.Spec.InitialNodeCount = ptr.To[int32](1)
+	if _, ok := spec["networkRef"]; !ok {
+		spec["networkRef"] = map[string]interface{}{"name": networkName}
 	}
-	if cluster.Spec.NetworkingMode == "" {
-		cluster.Spec.NetworkingMode = "VPC_NATIVE"
+	if _, ok := spec["subnetworkRef"]; !ok {
+		spec["subnetworkRef"] = map[string]interface{}{"name": subnetworkName}
 	}
-	if cluster.Spec.RemoveDefaultNodePool == nil {
-		cluster.Spec.RemoveDefaultNodePool = ptr.To(true)
+	setIfAbsent(spec, "initialNodeCount", int64(1))
+	setIfAbsent(spec, "networkingMode", "VPC_NATIVE")
+	setIfAbsent(spec, "removeDefaultNodePool", true)
+	if _, ok := spec["location"]; !ok && subnetworkRegion != "" {
+		spec["location"] = subnetworkRegion
 	}
-	if cluster.Spec.Location == "" && subnetworkRegion != "" {
-		cluster.Spec.Location = subnetworkRegion
-	}
+	cluster.Spec, err = mapToRawExtension(spec)
+	return err
 }
 
 // applyContainerNodePoolDefaults sets default values on the KCC
 // ContainerNodePool resource when fields are not already set by the user.
-func applyContainerNodePoolDefaults(nodePool *infrav1exp.GCPKCCContainerNodePoolResource, name, clusterName, clusterLocation string) {
+func applyContainerNodePoolDefaults(nodePool *infrav1exp.GCPKCCContainerNodePoolResource, name, clusterName, clusterLocation, ownerNamespace string) error {
 	if nodePool.Metadata.Name == "" {
 		nodePool.Metadata.Name = name
 	}
-	if nodePool.Spec.ClusterRef.Name == "" {
-		nodePool.Spec.ClusterRef.Name = clusterName
+	if nodePool.Metadata.Namespace == "" {
+		nodePool.Metadata.Namespace = ownerNamespace
 	}
-	if nodePool.Spec.Location == "" && clusterLocation != "" {
-		nodePool.Spec.Location = clusterLocation
+	// Enable state-into-spec merge so KCC populates spec.initialNodeCount
+	// with the actual node count from GCP (used for status.replicas).
+	if nodePool.Metadata.Annotations == nil {
+		nodePool.Metadata.Annotations = map[string]string{}
 	}
+	nodePool.Metadata.Annotations["cnrm.cloud.google.com/state-into-spec"] = "merge"
+	spec, err := specToMap(nodePool.Spec)
+	if err != nil {
+		return fmt.Errorf("parsing nodepool spec: %w", err)
+	}
+	if _, ok := spec["clusterRef"]; !ok {
+		spec["clusterRef"] = map[string]interface{}{"name": clusterName}
+	}
+	if _, ok := spec["location"]; !ok && clusterLocation != "" {
+		spec["location"] = clusterLocation
+	}
+	nodePool.Spec, err = mapToRawExtension(spec)
+	return err
 }
 
 // --- Override functions (always applied, CAPI is source of truth) ---
@@ -94,58 +167,106 @@ func applyContainerNodePoolDefaults(nodePool *infrav1exp.GCPKCCContainerNodePool
 // applySubnetworkCIDROverrides ensures that the pod and service CIDR secondary
 // IP ranges are set on the subnetwork. CAPI-specified CIDRs always take
 // precedence over user-configured values.
-func applySubnetworkCIDROverrides(subnet *infrav1exp.GCPKCCSubnetworkResource, podCIDR, serviceCIDR string) {
+func applySubnetworkCIDROverrides(subnet *infrav1exp.GCPKCCSubnetworkResource, podCIDR, serviceCIDR string) error {
+	if podCIDR == "" && serviceCIDR == "" {
+		return nil
+	}
+	spec, err := specToMap(subnet.Spec)
+	if err != nil {
+		return fmt.Errorf("parsing subnetwork spec: %w", err)
+	}
+	ranges, _ := spec["secondaryIpRange"].([]interface{})
 	if podCIDR != "" {
-		upsertSecondaryIPRange(&subnet.Spec.SecondaryIpRange, "pods", podCIDR)
+		ranges = upsertSecondaryIPRange(ranges, "pods", podCIDR)
 	}
 	if serviceCIDR != "" {
-		upsertSecondaryIPRange(&subnet.Spec.SecondaryIpRange, "services", serviceCIDR)
+		ranges = upsertSecondaryIPRange(ranges, "services", serviceCIDR)
 	}
+	spec["secondaryIpRange"] = ranges
+	subnet.Spec, err = mapToRawExtension(spec)
+	return err
 }
 
 // upsertSecondaryIPRange updates the secondary IP range with the given
 // rangeName if it already exists, or appends a new entry if it does not.
-func upsertSecondaryIPRange(ranges *[]infrav1exp.KCCSecondaryIPRange, rangeName, ipCidrRange string) {
-	for i, r := range *ranges {
-		if r.RangeName == rangeName {
-			(*ranges)[i].IpCidrRange = ipCidrRange
-			return
+func upsertSecondaryIPRange(ranges []interface{}, rangeName, ipCidrRange string) []interface{} {
+	for i, r := range ranges {
+		m, ok := r.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if name, _ := m["rangeName"].(string); name == rangeName {
+			m["ipCidrRange"] = ipCidrRange
+			ranges[i] = m
+			return ranges
 		}
 	}
-	*ranges = append(*ranges, infrav1exp.KCCSecondaryIPRange{
-		RangeName:   rangeName,
-		IpCidrRange: ipCidrRange,
+	return append(ranges, map[string]interface{}{
+		"rangeName":   rangeName,
+		"ipCidrRange": ipCidrRange,
 	})
 }
 
 // applyClusterVersionOverride sets the minimum master version on the KCC
 // ContainerCluster. This is always applied when a version is specified by CAPI.
-func applyClusterVersionOverride(cluster *infrav1exp.GCPKCCContainerClusterResource, version string) {
-	if version != "" {
-		cluster.Spec.MinMasterVersion = version
+func applyClusterVersionOverride(cluster *infrav1exp.GCPKCCContainerClusterResource, version string) error {
+	if version == "" {
+		return nil
 	}
+	spec, err := specToMap(cluster.Spec)
+	if err != nil {
+		return fmt.Errorf("parsing cluster spec: %w", err)
+	}
+	spec["minMasterVersion"] = version
+	cluster.Spec, err = mapToRawExtension(spec)
+	return err
 }
 
 // applyNodePoolReplicasOverride sets the initial node count on the KCC
 // ContainerNodePool. This is always applied when replicas are specified by CAPI.
-func applyNodePoolReplicasOverride(nodePool *infrav1exp.GCPKCCContainerNodePoolResource, replicas *int32) {
-	if replicas != nil {
-		nodePool.Spec.InitialNodeCount = replicas
+func applyNodePoolReplicasOverride(nodePool *infrav1exp.GCPKCCContainerNodePoolResource, replicas *int32) error {
+	if replicas == nil {
+		return nil
 	}
+	spec, err := specToMap(nodePool.Spec)
+	if err != nil {
+		return fmt.Errorf("parsing nodepool spec: %w", err)
+	}
+	spec["initialNodeCount"] = int64(*replicas)
+	nodePool.Spec, err = mapToRawExtension(spec)
+	return err
 }
 
 // applyNodePoolVersionOverride sets the Kubernetes version on the KCC
 // ContainerNodePool. This is always applied when a version is specified by CAPI.
-func applyNodePoolVersionOverride(nodePool *infrav1exp.GCPKCCContainerNodePoolResource, version string) {
-	if version != "" {
-		nodePool.Spec.Version = version
+func applyNodePoolVersionOverride(nodePool *infrav1exp.GCPKCCContainerNodePoolResource, version string) error {
+	if version == "" {
+		return nil
 	}
+	spec, err := specToMap(nodePool.Spec)
+	if err != nil {
+		return fmt.Errorf("parsing nodepool spec: %w", err)
+	}
+	spec["version"] = version
+	nodePool.Spec, err = mapToRawExtension(spec)
+	return err
 }
 
 // applyNodePoolFailureDomainOverride sets the node locations on the KCC
 // ContainerNodePool. This is always applied when failure domains are specified.
-func applyNodePoolFailureDomainOverride(nodePool *infrav1exp.GCPKCCContainerNodePoolResource, failureDomains []string) {
-	if len(failureDomains) > 0 {
-		nodePool.Spec.NodeLocations = failureDomains
+func applyNodePoolFailureDomainOverride(nodePool *infrav1exp.GCPKCCContainerNodePoolResource, failureDomains []string) error {
+	if len(failureDomains) == 0 {
+		return nil
 	}
+	spec, err := specToMap(nodePool.Spec)
+	if err != nil {
+		return fmt.Errorf("parsing nodepool spec: %w", err)
+	}
+	locs := make([]interface{}, len(failureDomains))
+	for i, l := range failureDomains {
+		locs[i] = l
+	}
+	spec["nodeLocations"] = locs
+	nodePool.Spec, err = mapToRawExtension(spec)
+	return err
 }

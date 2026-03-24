@@ -35,35 +35,6 @@ const (
 	kccReconciliationTimeout = 30 * time.Minute
 )
 
-var (
-	// computeNetworkGVK is the GroupVersionKind for KCC ComputeNetwork resources.
-	computeNetworkGVK = schema.GroupVersionKind{
-		Group:   "compute.cnrm.cloud.google.com",
-		Version: "v1beta1",
-		Kind:    "ComputeNetwork",
-	}
-
-	// computeSubnetworkGVK is the GroupVersionKind for KCC ComputeSubnetwork resources.
-	computeSubnetworkGVK = schema.GroupVersionKind{
-		Group:   "compute.cnrm.cloud.google.com",
-		Version: "v1beta1",
-		Kind:    "ComputeSubnetwork",
-	}
-
-	// containerClusterGVK is the GroupVersionKind for KCC ContainerCluster resources.
-	containerClusterGVK = schema.GroupVersionKind{
-		Group:   "container.cnrm.cloud.google.com",
-		Version: "v1beta1",
-		Kind:    "ContainerCluster",
-	}
-
-	// containerNodePoolGVK is the GroupVersionKind for KCC ContainerNodePool resources.
-	containerNodePoolGVK = schema.GroupVersionKind{
-		Group:   "container.cnrm.cloud.google.com",
-		Version: "v1beta1",
-		Kind:    "ContainerNodePool",
-	}
-)
 
 // isKCCResourceReady checks whether a KCC unstructured resource has a Ready
 // condition with status "True".
@@ -230,6 +201,26 @@ func setKCCOwnerReference(owner client.Object, ownerGVK schema.GroupVersionKind,
 
 	owned.SetOwnerReferences(append(existingRefs, ownerRef))
 	return nil
+}
+
+// deleteResource deletes a KCC resource by GVK/name/namespace. Returns true if
+// the resource no longer exists (deleted or already gone), false if deletion was
+// issued and the caller should requeue.
+func deleteResource(ctx context.Context, c client.Client, gvk schema.GroupVersionKind, name, namespace string) (bool, error) {
+	if name == "" {
+		return true, nil
+	}
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	obj.SetName(name)
+	obj.SetNamespace(namespace)
+	if err := c.Delete(ctx, obj); err != nil {
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+		return false, fmt.Errorf("deleting resource %s/%s: %w", namespace, name, err)
+	}
+	return false, nil
 }
 
 // checkKCCCRDsPresent verifies that the CRDs for the given GVKs are installed

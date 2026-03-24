@@ -81,121 +81,23 @@ spec:
                 description: Network defines the KCC ComputeNetwork resource.
                 properties:
                   metadata:
-                    description: Metadata for the KCC ComputeNetwork resource.
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        description: Annotations is an optional set of annotations
-                          on the KCC resource.
-                        type: object
-                      labels:
-                        additionalProperties:
-                          type: string
-                        description: Labels is an optional set of labels on the KCC
-                          resource.
-                        type: object
-                      name:
-                        description: Name is the name of the KCC resource.
-                        type: string
-                      namespace:
-                        description: Namespace is the namespace of the KCC resource.
-                        type: string
+                    description: Metadata for the KCC resource.
                     type: object
                   spec:
-                    description: Spec defines the desired state of the KCC ComputeNetwork.
-                    properties:
-                      additionalConfig:
-                        description: |-
-                          AdditionalConfig allows passing additional KCC fields not covered by the typed schema.
-                          These fields are merged into the KCC resource spec at reconcile time.
-                        x-kubernetes-preserve-unknown-fields: true
-                      autoCreateSubnetworks:
-                        description: AutoCreateSubnetworks controls whether to create
-                          a subnetwork for each region automatically.
-                        type: boolean
-                      description:
-                        description: Description is a human-readable description of
-                          the network.
-                        type: string
-                      routingMode:
-                        description: 'RoutingMode is the network-wide routing mode
-                          to use. Possible values: REGIONAL, GLOBAL.'
-                        type: string
-                    type: object
+                    description: Spec is the desired KCC resource spec, passed through
+                      as raw JSON.
+                    x-kubernetes-preserve-unknown-fields: true
                 type: object
               subnetwork:
                 description: Subnetwork defines the KCC ComputeSubnetwork resource.
                 properties:
                   metadata:
-                    description: Metadata for the KCC ComputeSubnetwork resource.
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        description: Annotations is an optional set of annotations
-                          on the KCC resource.
-                        type: object
-                      labels:
-                        additionalProperties:
-                          type: string
-                        description: Labels is an optional set of labels on the KCC
-                          resource.
-                        type: object
-                      name:
-                        description: Name is the name of the KCC resource.
-                        type: string
-                      namespace:
-                        description: Namespace is the namespace of the KCC resource.
-                        type: string
+                    description: Metadata for the KCC resource.
                     type: object
                   spec:
-                    description: Spec defines the desired state of the KCC ComputeSubnetwork.
-                    properties:
-                      additionalConfig:
-                        description: AdditionalConfig allows passing additional KCC
-                          fields not covered by the typed schema.
-                        x-kubernetes-preserve-unknown-fields: true
-                      description:
-                        description: Description is a human-readable description of
-                          the subnetwork.
-                        type: string
-                      ipCidrRange:
-                        description: IpCidrRange is the range of internal addresses
-                          owned by this subnetwork.
-                        type: string
-                      networkRef:
-                        description: NetworkRef is a reference to the network this
-                          subnetwork belongs to.
-                        properties:
-                          name:
-                            description: Name is the name of the referenced KCC resource.
-                            type: string
-                        type: object
-                      region:
-                        description: Region is the GCP region for this subnetwork.
-                        type: string
-                      secondaryIpRange:
-                        description: SecondaryIpRange defines secondary IP ranges
-                          for pods and services.
-                        items:
-                          description: KCCSecondaryIPRange defines a secondary IP
-                            range for a subnetwork.
-                          properties:
-                            ipCidrRange:
-                              description: IpCidrRange is the range of IP addresses
-                                for this secondary range.
-                              type: string
-                            rangeName:
-                              description: RangeName is the name identifying the secondary
-                                range.
-                              type: string
-                          required:
-                          - ipCidrRange
-                          - rangeName
-                          type: object
-                        type: array
-                    type: object
+                    description: Spec is the desired KCC resource spec, passed through
+                      as raw JSON.
+                    x-kubernetes-preserve-unknown-fields: true
                 type: object
             required:
             - network

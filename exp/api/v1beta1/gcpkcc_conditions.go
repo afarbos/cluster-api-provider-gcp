@@ -25,14 +25,9 @@ const (
 	KCCDegradedCondition        = "Degraded"
 	KCCDeletionBlockedCondition = "DeletionBlocked"
 
-	// KCC condition reasons.
-	KCCResourceCreatingReason       = "KCCResourceCreating"
-	KCCResourceReadyReason          = "KCCResourceReady"
-	KCCResourceNotReadyReason       = "KCCResourceNotReady"
-	KCCResourceDeletingReason       = "KCCResourceDeleting"
-	KCCResourceDeletedReason        = "KCCResourceDeleted"
-	KCCDeletionTimeoutReason        = "DeletionTimeout"
-	KCCReconciliationTimeoutReason  = "ReconciliationTimeout"
-	WaitingForKCCInfraClusterReason = "WaitingForInfraCluster"
-	WaitingForKCCControlPlaneReason = "WaitingForControlPlane"
+	// KCC condition reasons (KCC-specific only; use clusterv1 constants for
+	// generic reasons like Ready, NotReady, Deleting, etc.).
+	KCCResourceCreatingReason      = "KCCResourceCreating"
+	KCCDeletionTimeoutReason       = "DeletionTimeout"
+	KCCReconciliationTimeoutReason = "ReconciliationTimeout"
 )
