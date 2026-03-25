@@ -1025,3 +1025,84 @@ if feature.Gates.Enabled(feature.GKE) {
 ```
 
 **Files:** `main.go`.
+
+## Addendum: E2E Testing Findings (A15-A20)
+
+After end-to-end testing with kind + Tilt + Config Connector against a live GCP project, the following changes were required:
+
+### A15. Server-side apply for KCC resources
+
+**Problem:** `createOrPatchKCCResource` used `client.MergeFrom` which computes a diff and removes fields not in the desired state. KCC-managed immutable fields like `spec.resourceID` caused admission webhook rejections on re-reconcile.
+
+**Change:** Replace `createOrPatchKCCResource` with `applyKCCResource` using server-side apply (`client.Apply` + `client.FieldOwner`). This only sends CAPG-managed fields and leaves KCC-managed fields untouched. Handles both create and update in one call.
+
+**Files:** `exp/controllers/gcpkcc_helpers.go`, all 3 controllers.
+
+### A16. Fix ContainerCluster defaults
+
+**Problem:** Multiple issues found during E2E:
+- `spec.removeDefaultNodePool` is not a valid KCC spec field — it's an annotation (`cnrm.cloud.google.com/remove-default-node-pool`)
+- `spec.ipAllocationPolicy` was missing but required for VPC_NATIVE clusters
+- `spec.initialNodeCount` must be forced to 1 (GKE requires >= 1 at creation; the default node pool is removed via annotation)
+- `spec.networkingMode` should be explicitly set to `VPC_NATIVE`
+
+**Change:**
+- Remove `removeDefaultNodePool` from spec defaults (already set as annotation)
+- Add `ipAllocationPolicy` default when `networkingMode` is `VPC_NATIVE`
+- Force `initialNodeCount` to 1
+- Add `state-into-spec: merge` annotation on ContainerCluster so KCC populates spec fields from GCP state
+
+**Files:** `exp/controllers/gcpkcc_defaults.go`.
+
+### A17. Fix kubeconfig generation
+
+**Problem:** CA certificate was not found at `status.masterAuth.clusterCaCertificate` — KCC places it under `status.observedState.masterAuth.clusterCaCertificate`. Additionally, the control plane was marked `Ready=true` before kubeconfig generation succeeded.
+
+**Change:**
+- Fix CA cert path to `status.observedState.masterAuth.clusterCaCertificate`
+- Gate `Ready=true` on successful kubeconfig creation — requeue if endpoint or CA cert not yet available
+
+**Files:** `exp/controllers/gcpkccmanagedcontrolplane_controller.go`.
+
+### A18. Node pool location from live ContainerCluster
+
+**Problem:** Node pool defaults tried to read location from `controlPlane.Spec.ContainerCluster` (user's raw JSON) which didn't contain the defaulted location. The location only existed on the live KCC ContainerCluster object.
+
+**Change:** The machine pool controller fetches the live KCC ContainerCluster and passes it to `applyMachinePoolDefaults`, which reads `spec.location` from it (populated via `state-into-spec: merge`).
+
+**Files:** `exp/controllers/gcpkcc_defaults.go`, `exp/controllers/gcpkccmanagedmachinepool_controller.go`.
+
+### A19. Minimal templates with resourceID
+
+**Problem:** Templates duplicated fields that already have defaults (networkRef, subnetworkRef, initialNodeCount, removeDefaultNodePool, etc.).
+
+**Change:** Strip templates to only user-required fields (project annotation, CIDR, region, version, machineType). Add `spec.resourceID` to network, subnetwork, and ContainerCluster templates for BYOI (Bring Your Own Infrastructure) support.
+
+**Files:** `templates/cluster-template-gke-kcc.yaml`.
+
+### A20. Tilt and install-config-connector improvements
+
+**Problem:** Multiple issues in the local dev workflow:
+- Config Connector operator is a StatefulSet, not a Deployment (install script waited on wrong resource type)
+- KCC webhook pods OOM with default 128Mi in kind clusters
+- The ConfigConnector CR schema rejected `googleServiceAccount: ""` with `credentialSecretName` (oneOf validation)
+- KCC CRDs missing from kustomize config
+- Config Connector must be installed before CAPG (KCC CRD check at startup)
+- `MachinePool` feature gate missing from CAPG args in tilt-settings
+
+**Change:**
+- Fix install script: StatefulSet rollout status, remove invalid `googleServiceAccount` field
+- Use `ControllerResource` CRD to set proper memory limits via the operator (not kubectl patch)
+- Add KCC CRDs to `config/crd/kustomization.yaml`
+- Install Config Connector before CAPG in Tiltfile
+- Add `MachinePool=true` to CAPG feature gates in tilt-settings
+- Decode credentials via python3 to avoid shell quoting issues
+
+**Files:** `hack/install-config-connector.sh`, `Tiltfile`, `tilt-settings.json`, `config/crd/kustomization.yaml`.
+
+### Known limitations (for future work)
+
+- **`providerIDList` not populated:** CAPI MachinePool stays in `ScalingUp` phase because `spec.providerIDList` is empty. Requires reading GCP Compute API instance group URLs or workload cluster Node listing.
+- **`readyReplicas` not set:** Needed for CAPI to consider MachinePool fully provisioned.
+- **`status.failureDomains` not set:** The infra cluster should expose available zones from the ContainerCluster's `spec.nodeLocations` (via state-into-spec merge) as `status.failureDomains` per CAPI contract.
+- **Cluster phase stuck at `Provisioning`:** Related to missing providerIDList — CAPI doesn't transition to `Provisioned` until MachinePool reports ready replicas correctly.

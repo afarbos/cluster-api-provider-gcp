@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 
@@ -274,9 +275,6 @@ func TestApplyControlPlaneDefaults(t *testing.T) {
 			if got, _ := spec["initialNodeCount"].(float64); got != tt.wantInitialCount {
 				t.Errorf("initialNodeCount = %v, want %v", got, tt.wantInitialCount)
 			}
-			if got, _ := spec["removeDefaultNodePool"].(bool); got != tt.wantRemoveDefault {
-				t.Errorf("removeDefaultNodePool = %v, want %v", got, tt.wantRemoveDefault)
-			}
 			if got, _ := spec["location"].(string); got != tt.wantLocation {
 				t.Errorf("location = %q, want %q", got, tt.wantLocation)
 			}
@@ -362,15 +360,20 @@ func TestApplyMachinePoolDefaults(t *testing.T) {
 			}
 
 			kccCP := &infrav1exp.GCPKCCManagedControlPlane{
-				Spec: infrav1exp.GCPKCCManagedControlPlaneSpec{
-					ContainerCluster: rawKCC(`{"spec":{"location":"` + tt.clusterLocation + `"}}`),
-				},
 				Status: infrav1exp.GCPKCCManagedControlPlaneStatus{
 					ClusterName: tt.clusterName,
 				},
 			}
 
-			if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP); err != nil {
+			existingCluster := &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": map[string]interface{}{
+						"location": tt.clusterLocation,
+					},
+				},
+			}
+
+			if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP, existingCluster); err != nil {
 				t.Fatalf("applyMachinePoolDefaults() error = %v", err)
 			}
 

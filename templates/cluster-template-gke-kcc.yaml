@@ -25,22 +25,20 @@ metadata:
 spec:
   network:
     metadata:
-      name: "${CLUSTER_NAME}-network"
       annotations:
         cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
     spec:
-      autoCreateSubnetworks: false
-      routingMode: REGIONAL
+      # Set resourceID to an existing VPC network name to adopt it (BYOI).
+      resourceID: "${CLUSTER_NAME}"
   subnetwork:
     metadata:
-      name: "${CLUSTER_NAME}-subnet"
       annotations:
         cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
     spec:
       ipCidrRange: "10.0.0.0/20"
       region: "${GCP_REGION}"
-      networkRef:
-        name: "${CLUSTER_NAME}-network"
+      # Set resourceID to an existing subnetwork name to adopt it (BYOI).
+      resourceID: "${CLUSTER_NAME}"
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 kind: GCPKCCManagedControlPlane
@@ -49,20 +47,11 @@ metadata:
 spec:
   containerCluster:
     metadata:
-      name: "${CLUSTER_NAME}"
       annotations:
         cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
     spec:
-      location: "${GCP_REGION}"
-      initialNodeCount: 1
-      removeDefaultNodePool: true
-      networkRef:
-        name: "${CLUSTER_NAME}-network"
-      subnetworkRef:
-        name: "${CLUSTER_NAME}-subnet"
-      ipAllocationPolicy:
-        clusterSecondaryRangeName: pods
-        servicesSecondaryRangeName: services
+      # Set resourceID to an existing GKE cluster name to adopt it (BYOI).
+      resourceID: "${CLUSTER_NAME}"
   version: "${KUBERNETES_VERSION}"
 ---
 apiVersion: cluster.x-k8s.io/v1beta1
@@ -89,12 +78,8 @@ metadata:
 spec:
   nodePool:
     metadata:
-      name: "${CLUSTER_NAME}-mp-0"
       annotations:
         cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
     spec:
-      location: "${GCP_REGION}"
-      clusterRef:
-        name: "${CLUSTER_NAME}"
       nodeConfig:
         machineType: e2-medium

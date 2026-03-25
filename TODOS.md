@@ -158,6 +158,22 @@ See docs/proposals/config-connector-integration.md for full design.
 - [x] **A13: ClusterClass template patches** — Added variables (region, machineType, kubernetesVersion) and JSON patches. Topology template uses variables.
 - [x] **A14: Nest ConfigConnector under GKE gate** — ConfigConnector inside GKE gate. MachinePool controller under MachinePool gate.
 
+## E2E Testing Findings (Addendum A15-A20)
+
+- [x] **A15: Server-side apply** — Replaced `createOrPatchKCCResource` with `applyKCCResource` using `client.Apply`. Only sends CAPG-managed fields.
+- [x] **A16: Fix ContainerCluster defaults** — Removed `removeDefaultNodePool` from spec (it's an annotation). Added `ipAllocationPolicy` for VPC_NATIVE. Forced `initialNodeCount=1`. Added `state-into-spec: merge`.
+- [x] **A17: Fix kubeconfig generation** — Fixed CA cert path to `observedState.masterAuth.clusterCaCertificate`. Gate Ready on kubeconfig success.
+- [x] **A18: Node pool location from live ContainerCluster** — Read `spec.location` from the KCC ContainerCluster (via merge) instead of the CAPG spec.
+- [x] **A19: Minimal templates with resourceID** — Stripped redundant defaults. Added `resourceID` for BYOI.
+- [x] **A20: Tilt and install-config-connector fixes** — StatefulSet wait, ControllerResource for memory limits, KCC CRDs in kustomize, correct Tiltfile ordering, MachinePool gate.
+
+### Known limitations (future work)
+
+- [ ] **providerIDList** — Not populated. CAPI MachinePool stays in `ScalingUp`. Needs GCP Compute API or workload cluster Node listing.
+- [ ] **readyReplicas** — Not set on GCPKCCManagedMachinePool.
+- [ ] **status.failureDomains** — Infra cluster should expose zones from ContainerCluster `spec.nodeLocations` (via merge).
+- [ ] **Cluster phase** — Stuck at `Provisioning` due to missing providerIDList/readyReplicas.
+
 ---
 
 ## Design Decisions

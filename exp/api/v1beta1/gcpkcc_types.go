@@ -15,19 +15,3 @@ limitations under the License.
 */
 
 package v1beta1
-
-// KCCResourceRef is a reference to a KCC resource by name.
-type KCCResourceRef struct {
-	// Name is the name of the referenced KCC resource.
-	// +optional
-	Name string `json:"name,omitempty"`
-}
-
-// KCCSecondaryIPRange defines a secondary IP range for a subnetwork.
-type KCCSecondaryIPRange struct {
-	// RangeName is the name identifying the secondary range.
-	RangeName string `json:"rangeName"`
-
-	// IpCidrRange is the range of IP addresses for this secondary range.
-	IpCidrRange string `json:"ipCidrRange"`
-}

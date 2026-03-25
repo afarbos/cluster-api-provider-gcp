@@ -201,7 +201,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 		return ctrl.Result{}, fmt.Errorf("setting ContainerCluster owner reference: %w", err)
 	}
 
-	if err := createOrPatchKCCResource(ctx, r.Client, containerClusterU); err != nil {
+	if err := applyKCCResource(ctx, r.Client, containerClusterU); err != nil {
 		return ctrl.Result{}, fmt.Errorf("creating/patching KCC ContainerCluster: %w", err)
 	}
 
@@ -214,10 +214,27 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 
 	ready, readyMsg := getKCCReadiness(existing)
 
-	// 8. If ready, set status fields and generate kubeconfig.
+	// 8. If KCC resource is ready, generate kubeconfig and set status.
 	if ready {
 		endpoint, _ := getStatusFieldFromUnstructured(existing, "endpoint")
-		caCert, _ := getStatusFieldFromUnstructured(existing, "masterAuth", "clusterCaCertificate")
+		caCert, _ := getStatusFieldFromUnstructured(existing, "observedState", "masterAuth", "clusterCaCertificate")
+
+		// Don't mark ready until we have both endpoint and CA cert for kubeconfig.
+		if endpoint == "" || caCert == "" {
+			log.Info("KCC ContainerCluster is ready but endpoint or CA cert not yet available, requeueing")
+			apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{
+				Type:    infrav1exp.ReadyCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  clusterv1.NotReadyReason,
+				Message: "Waiting for endpoint and CA certificate",
+			})
+			return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
+		}
+
+		// Generate kubeconfig before marking ready.
+		if err := r.reconcileKubeconfig(ctx, kccCP, cluster, endpoint, caCert); err != nil {
+			return ctrl.Result{}, fmt.Errorf("reconciling kubeconfig: %w", err)
+		}
 
 		kccCP.Spec.ControlPlaneEndpoint = clusterv1beta1.APIEndpoint{
 			Host: endpoint,
@@ -234,13 +251,6 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 		masterVersion, _ := getStatusFieldFromUnstructured(existing, "masterVersion")
 		if masterVersion != "" {
 			kccCP.Status.Version = &masterVersion
-		}
-
-		// Generate kubeconfig.
-		if endpoint != "" && caCert != "" {
-			if err := r.reconcileKubeconfig(ctx, kccCP, cluster, endpoint, caCert); err != nil {
-				return ctrl.Result{}, fmt.Errorf("reconciling kubeconfig: %w", err)
-			}
 		}
 
 		apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{

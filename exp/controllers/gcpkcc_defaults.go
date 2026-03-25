@@ -20,10 +20,17 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+)
+
+const (
+	// KCC annotations used by the controllers.
+	kccRemoveDefaultNodePoolAnnotation = "cnrm.cloud.google.com/remove-default-node-pool"
+	kccStateIntoSpecAnnotation         = "cnrm.cloud.google.com/state-into-spec"
 )
 
 // rawToMap converts a RawExtension to a map.
@@ -195,9 +202,23 @@ func applyControlPlaneDefaults(kccCP *infrav1exp.GCPKCCManagedControlPlane, clus
 	if _, ok := spec["subnetworkRef"]; !ok {
 		spec["subnetworkRef"] = map[string]interface{}{"name": infraCluster.Status.SubnetworkName}
 	}
-	setIfAbsent(spec, "initialNodeCount", int64(1))
+	// Force initialNodeCount to 1 — GKE requires >= 1 at creation time.
+	// The default node pool is removed via the remove-default-node-pool
+	// annotation; actual nodes are managed exclusively via MachinePool.
+	spec["initialNodeCount"] = int64(1)
 	setIfAbsent(spec, "networkingMode", "VPC_NATIVE")
-	setIfAbsent(spec, "removeDefaultNodePool", true)
+	// VPC_NATIVE requires ipAllocationPolicy with secondary range names
+	// matching those created on the subnetwork by CIDR overrides.
+	// Only set when networkingMode is VPC_NATIVE.
+	networkingMode, _ := spec["networkingMode"].(string)
+	if networkingMode == "VPC_NATIVE" {
+		if _, ok := spec["ipAllocationPolicy"]; !ok {
+			spec["ipAllocationPolicy"] = map[string]interface{}{
+				"clusterSecondaryRangeName":  "pods",
+				"servicesSecondaryRangeName": "services",
+			}
+		}
+	}
 
 	// Default location from subnetwork region
 	if _, ok := spec["location"]; !ok {
@@ -212,13 +233,15 @@ func applyControlPlaneDefaults(kccCP *infrav1exp.GCPKCCManagedControlPlane, clus
 		spec["minMasterVersion"] = *kccCP.Spec.Version
 	}
 
-	// Set remove-default-node-pool annotation
+	// Set annotations: remove default node pool + enable state-into-spec merge
+	// so KCC populates spec fields (like nodeLocations) from GCP state.
 	annotations, _ := md["annotations"].(map[string]interface{})
 	if annotations == nil {
 		annotations = map[string]interface{}{}
 		md["annotations"] = annotations
 	}
-	annotations["cnrm.cloud.google.com/remove-default-node-pool"] = "true"
+	annotations[kccRemoveDefaultNodePoolAnnotation] = "true"
+	annotations[kccStateIntoSpecAnnotation] = "merge"
 
 	kccCP.Spec.ContainerCluster, err = mapToRaw(ccMap)
 	return err
@@ -226,7 +249,7 @@ func applyControlPlaneDefaults(kccCP *infrav1exp.GCPKCCManagedControlPlane, clus
 
 // applyMachinePoolDefaults sets defaults and CAPI overrides on the ContainerNodePool
 // KCC resource for the given GCPKCCManagedMachinePool.
-func applyMachinePoolDefaults(kccMMP *infrav1exp.GCPKCCManagedMachinePool, machinePool *clusterv1.MachinePool, controlPlane *infrav1exp.GCPKCCManagedControlPlane) error {
+func applyMachinePoolDefaults(kccMMP *infrav1exp.GCPKCCManagedMachinePool, machinePool *clusterv1.MachinePool, controlPlane *infrav1exp.GCPKCCManagedControlPlane, existingCluster *unstructured.Unstructured) error {
 	npMap, err := rawToMap(kccMMP.Spec.NodePool)
 	if err != nil {
 		return fmt.Errorf("parsing nodepool: %w", err)
@@ -245,17 +268,17 @@ func applyMachinePoolDefaults(kccMMP *infrav1exp.GCPKCCManagedMachinePool, machi
 		annotations = map[string]interface{}{}
 		md["annotations"] = annotations
 	}
-	annotations["cnrm.cloud.google.com/state-into-spec"] = "merge"
+	annotations[kccStateIntoSpecAnnotation] = "merge"
 
 	spec := getRawSpec(npMap)
 	if _, ok := spec["clusterRef"]; !ok {
 		spec["clusterRef"] = map[string]interface{}{"name": controlPlane.Status.ClusterName}
 	}
 
-	// Default location from cluster
+	// Default location from the live KCC ContainerCluster (populated via state-into-spec: merge).
 	if _, ok := spec["location"]; !ok {
-		cpMap, _ := rawToMap(controlPlane.Spec.ContainerCluster)
-		if loc := getRawSpecString(cpMap, "location"); loc != "" {
+		loc, _, _ := unstructured.NestedString(existingCluster.Object, "spec", "location")
+		if loc != "" {
 			spec["location"] = loc
 		}
 	}

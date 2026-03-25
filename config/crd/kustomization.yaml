@@ -16,6 +16,12 @@ resources:
 - bases/infrastructure.cluster.x-k8s.io_gcpmanagedclustertemplates.yaml
 - bases/infrastructure.cluster.x-k8s.io_gcpmanagedcontrolplanetemplates.yaml
 - bases/infrastructure.cluster.x-k8s.io_gcpmanagedmachinepooltemplates.yaml
+- bases/infrastructure.cluster.x-k8s.io_gcpkccmanagedclusters.yaml
+- bases/infrastructure.cluster.x-k8s.io_gcpkccmanagedclustertemplates.yaml
+- bases/infrastructure.cluster.x-k8s.io_gcpkccmanagedcontrolplanes.yaml
+- bases/infrastructure.cluster.x-k8s.io_gcpkccmanagedcontrolplanetemplates.yaml
+- bases/infrastructure.cluster.x-k8s.io_gcpkccmanagedmachinepools.yaml
+- bases/infrastructure.cluster.x-k8s.io_gcpkccmanagedmachinepooltemplates.yaml
 - bases/bootstrap.cluster.x-k8s.io_gkeconfigs.yaml
 - bases/bootstrap.cluster.x-k8s.io_gkeconfigtemplates.yaml
 

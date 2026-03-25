@@ -273,12 +273,29 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 		return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
 	}
 
-	// 3. Apply defaults and CAPI overrides.
-	if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP); err != nil {
+	// 3. Get GCPKCCManagedCluster for location defaulting.
+	kccInfraCluster := &infrav1exp.GCPKCCManagedCluster{}
+	infraClusterRef := types.NamespacedName{
+		Name:      cluster.Spec.InfrastructureRef.Name,
+		Namespace: cluster.Namespace,
+	}
+	if err := r.Get(ctx, infraClusterRef, kccInfraCluster); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get GCPKCCManagedCluster: %w", err)
+	}
+
+	// 4. Read the live KCC ContainerCluster for location (populated via state-into-spec: merge).
+	existingCluster := &unstructured.Unstructured{}
+	existingCluster.SetGroupVersionKind(infrav1exp.ContainerClusterGVK)
+	if err := r.Get(ctx, types.NamespacedName{Name: kccCP.Status.ClusterName, Namespace: kccMMP.Namespace}, existingCluster); err != nil {
+		return ctrl.Result{}, fmt.Errorf("getting KCC ContainerCluster: %w", err)
+	}
+
+	// 5. Apply defaults and CAPI overrides.
+	if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP, existingCluster); err != nil {
 		return ctrl.Result{}, fmt.Errorf("applying defaults: %w", err)
 	}
 
-	// 4. Convert to unstructured ContainerNodePool.
+	// 6. Convert to unstructured ContainerNodePool.
 	containerNodePoolU, err := infrav1exp.ToUnstructured(kccMMP.Spec.NodePool, infrav1exp.ContainerNodePoolGVK)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("converting ContainerNodePool to unstructured: %w", err)
@@ -294,7 +311,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 		return ctrl.Result{}, fmt.Errorf("setting ContainerNodePool owner reference: %w", err)
 	}
 
-	if err := createOrPatchKCCResource(ctx, r.Client, containerNodePoolU); err != nil {
+	if err := applyKCCResource(ctx, r.Client, containerNodePoolU); err != nil {
 		return ctrl.Result{}, fmt.Errorf("creating/patching KCC ContainerNodePool: %w", err)
 	}
 

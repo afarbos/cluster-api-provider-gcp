@@ -249,10 +249,10 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 	}
 
 	// 6. Create or patch KCC resources.
-	if err := createOrPatchKCCResource(ctx, r.Client, networkU); err != nil {
+	if err := applyKCCResource(ctx, r.Client, networkU); err != nil {
 		return ctrl.Result{}, fmt.Errorf("creating/patching KCC ComputeNetwork: %w", err)
 	}
-	if err := createOrPatchKCCResource(ctx, r.Client, subnetworkU); err != nil {
+	if err := applyKCCResource(ctx, r.Client, subnetworkU); err != nil {
 		return ctrl.Result{}, fmt.Errorf("creating/patching KCC ComputeSubnetwork: %w", err)
 	}
 
