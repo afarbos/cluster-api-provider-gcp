@@ -1106,3 +1106,55 @@ After end-to-end testing with kind + Tilt + Config Connector against a live GCP 
 - **`readyReplicas` not set:** Needed for CAPI to consider MachinePool fully provisioned.
 - **`status.failureDomains` not set:** The infra cluster should expose available zones from the ContainerCluster's `spec.nodeLocations` (via state-into-spec merge) as `status.failureDomains` per CAPI contract.
 - **Cluster phase stuck at `Provisioning`:** Related to missing providerIDList — CAPI doesn't transition to `Provisioned` until MachinePool reports ready replicas correctly.
+
+## Addendum: CAPI Status & Replicas Fixes (A21-A25) — WIP
+
+Committed to save work. Needs in-depth review of CAPI v1beta2 contract compliance before finalizing.
+
+### A21. providerIDList from workload cluster
+
+**Problem:** `spec.providerIDList` was never populated. CAPI MachinePool stayed in `ScalingUp`.
+
+**Change:** Added `getNodePoolInfoFromWorkloadCluster` helper in `exp/controllers/gcpkcc_helpers.go`. Reads kubeconfig secret (`{clusterName}-kubeconfig`), creates a client to the workload cluster, lists Nodes by label `cloud.google.com/gke-nodepool={nodePoolName}`, extracts `spec.providerID` from each node. Also counts ready nodes for `status.readyReplicas`.
+
+**Result:** `spec.providerIDList` populated with GCE provider IDs (`gce://PROJECT/ZONE/INSTANCE`). MachinePool transitions to `Running`. Cluster transitions to `Provisioned`.
+
+**Files:** `exp/controllers/gcpkcc_helpers.go`, `exp/controllers/gcpkccmanagedmachinepool_controller.go`.
+
+### A22. failureDomains from ContainerCluster
+
+**Problem:** `status.failureDomains` was never populated on GCPKCCManagedCluster.
+
+**Change:** Added `getFailureDomains` method on the cluster controller. Reads `spec.nodeLocations` from the live KCC ContainerCluster (populated via `state-into-spec: merge`). Maps each zone to a `FailureDomainSpec`. Added RBAC for `containerclusters` get/list/watch.
+
+**Files:** `exp/controllers/gcpkccmanagedcluster_controller.go`.
+
+### A23. patch.NewHelper for all KCC controllers
+
+**Problem:** The manual `client.MergeFrom` + `r.Status().Patch()` pattern failed when both spec and status were modified in the same reconcile. The separate spec patch (for `providerIDList`) updated the in-memory object from the server response, overwriting status changes.
+
+**Change:** Replaced all three KCC controllers' deferred patch with CAPI's `patch.NewHelper`, which patches spec and status together in one call. This matches the scope-based pattern used by existing CAPG controllers.
+
+**Files:** All 3 KCC controllers.
+
+### A24. Replicas zone division
+
+**Problem:** GKE's `nodeCount`/`initialNodeCount` is per-zone, but CAPI's `MachinePool.spec.replicas` is total. `replicas=1` in a 3-zone cluster created 3 nodes.
+
+**Change:** Added zone division in `applyMachinePoolDefaults`: `nodeCount = replicas / numZones`. Zone count sourced from `MachinePool.spec.failureDomains` (if set) or `infraCluster.status.failureDomains`. Returns error if `replicas % numZones != 0`. Uses `nodeCount` (resize field) instead of `initialNodeCount` (creation-only). Also sets `initialNodeCount` via `setIfAbsent` for creation time.
+
+**Files:** `exp/controllers/gcpkcc_defaults.go`, `exp/controllers/gcpkccmanagedmachinepool_controller.go`.
+
+### A25. Autoscaling awareness
+
+**Problem:** When autoscaling is configured on the node pool, the controller should not override `nodeCount` (autoscaler manages it).
+
+**Change:** Added `getAutoscaling` helper. When autoscaling block is present in node pool spec, maps CAPI `replicas` → `autoscaling.totalMinNodeCount` instead of `nodeCount`. Users should use `totalMaxNodeCount` (not per-zone `maxNodeCount`) when using this with `replicas`.
+
+**Files:** `exp/controllers/gcpkcc_defaults.go`.
+
+### Known limitations (needs in-depth review)
+
+- **Cluster CP columns empty:** CAPI v1beta2 contract expects `spec.replicas`, `status.replicas`, `status.availableReplicas`, `status.upToDateReplicas` on control plane object. Even with `externalManagedControlPlane=true`, CAPI reads these fields for Cluster status aggregation. Need to set all to 1 for managed GKE CP.
+- **Cluster Worker columns empty:** CAPI MachinePool shows correct values (AVAILABLE=3, UP-TO-DATE=3) but Cluster-level aggregation is empty. Investigate v1beta2 contract field propagation from MachinePool to Cluster.
+- **Condition visibility:** Errors from `applyMachinePoolDefaults` only appear in controller logs, not as conditions on the GCPKCCManagedMachinePool object.

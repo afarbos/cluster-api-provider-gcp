@@ -373,7 +373,8 @@ func TestApplyMachinePoolDefaults(t *testing.T) {
 				},
 			}
 
-			if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP, existingCluster); err != nil {
+			infraCluster := &infrav1exp.GCPKCCManagedCluster{}
+			if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP, existingCluster, infraCluster); err != nil {
 				t.Fatalf("applyMachinePoolDefaults() error = %v", err)
 			}
 

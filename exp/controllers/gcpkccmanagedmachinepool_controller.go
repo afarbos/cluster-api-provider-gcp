@@ -42,6 +42,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
+	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 )
 
@@ -104,12 +105,16 @@ func (r *GCPKCCManagedMachinePoolReconciler) Reconcile(ctx context.Context, req 
 		return ctrl.Result{}, nil
 	}
 
-	// 5. Defer status patch — captures a snapshot now and patches only the diff
-	// at the end of reconciliation, ensuring status is always updated regardless
-	// of which code path returns (success, error, or early exit).
-	patchBase := client.MergeFrom(kccMMP.DeepCopy())
+	// 5. Defer patch — snapshots the object now and patches spec+status together
+	// at the end of reconciliation, matching the scope-based pattern used by
+	// existing CAPG controllers. This avoids issues with separate spec/status
+	// patches overwriting each other's in-memory changes.
+	patchHelper, err := patch.NewHelper(kccMMP, r.Client)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to init patch helper: %w", err)
+	}
 	defer func() {
-		if err := r.Status().Patch(ctx, kccMMP, patchBase); err != nil && reterr == nil {
+		if err := patchHelper.Patch(ctx, kccMMP); err != nil && reterr == nil {
 			reterr = err
 		}
 	}()
@@ -291,7 +296,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 	}
 
 	// 5. Apply defaults and CAPI overrides.
-	if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP, existingCluster); err != nil {
+	if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP, existingCluster, kccInfraCluster); err != nil {
 		return ctrl.Result{}, fmt.Errorf("applying defaults: %w", err)
 	}
 
@@ -324,21 +329,39 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 
 	ready, readyMsg := getKCCReadiness(existing)
 
-	// 7. If ready, set status fields.
+	// 7. If ready, set status fields and populate providerIDList from workload cluster.
 	if ready {
 		kccMMP.Status.Ready = true
 		kccMMP.Status.Initialization = &infrav1exp.GCPKCCManagedMachinePoolInitializationStatus{
 			Provisioned: ptr.To(true),
 		}
 		kccMMP.Status.NodePoolName = containerNodePoolU.GetName()
-		// Read actual node count from KCC resource (populated via
-		// cnrm.cloud.google.com/state-into-spec: merge annotation).
-		// NOTE: With autoscaling enabled, initialNodeCount may not reflect
-		// the current node count immediately -- there is a delay between
-		// the autoscaler scaling event and the KCC status update.
-		nodeCount, found, _ := unstructured.NestedInt64(existing.Object, "spec", "initialNodeCount")
-		if found {
-			kccMMP.Status.Replicas = int32(nodeCount)
+
+		// Read per-zone node count from KCC resource (populated via
+		// state-into-spec merge) as fallback. Multiply by zone count for total.
+		nodeCount, nodeCountFound, _ := unstructured.NestedInt64(existing.Object, "spec", "nodeCount")
+		if nodeCountFound {
+			total := int32(nodeCount)
+			nodeLocs, found, _ := unstructured.NestedStringSlice(existing.Object, "spec", "nodeLocations")
+			if found && len(nodeLocs) > 0 {
+				total *= int32(len(nodeLocs))
+			}
+			kccMMP.Status.Replicas = total
+		}
+
+		// Read observed version from the KCC ContainerNodePool.
+		if version, _ := getStatusFieldFromUnstructured(existing, "observedState", "version"); version != "" {
+			kccMMP.Status.Version = &version
+		}
+
+		// Populate providerIDList and readyReplicas from workload cluster nodes.
+		npInfo, err := getNodePoolInfoFromWorkloadCluster(ctx, r.Client, cluster.Name, kccMMP.Namespace, containerNodePoolU.GetName())
+		if err != nil {
+			log.Error(err, "Failed to get node pool info from workload cluster, will retry")
+		} else if len(npInfo.ProviderIDList) > 0 {
+			kccMMP.Spec.ProviderIDList = npInfo.ProviderIDList
+			kccMMP.Status.Replicas = npInfo.Replicas
+			kccMMP.Status.ReadyReplicas = npInfo.ReadyReplicas
 		}
 
 		apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{

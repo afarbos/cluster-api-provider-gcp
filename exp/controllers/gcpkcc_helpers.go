@@ -19,11 +19,16 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"sort"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -153,4 +158,73 @@ func checkKCCCRDsPresent(ctx context.Context, c client.Client, gvks ...schema.Gr
 		}
 	}
 	return nil
+}
+
+// nodePoolInfo contains the provider ID list and ready replica count for a node pool.
+type nodePoolInfo struct {
+	ProviderIDList []string
+	ReadyReplicas  int32
+	Replicas       int32
+}
+
+// getNodePoolInfoFromWorkloadCluster connects to the workload cluster and lists
+// nodes belonging to the given node pool. Returns provider IDs and ready count.
+func getNodePoolInfoFromWorkloadCluster(ctx context.Context, mgmtClient client.Client, clusterName, namespace, nodePoolName string) (*nodePoolInfo, error) {
+	// Get the kubeconfig secret.
+	secretName := fmt.Sprintf("%s-kubeconfig", clusterName)
+	secret := &corev1.Secret{}
+	if err := mgmtClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err != nil {
+		return nil, fmt.Errorf("getting kubeconfig secret %s: %w", secretName, err)
+	}
+
+	kubeconfigData, ok := secret.Data["value"]
+	if !ok || len(kubeconfigData) == 0 {
+		return nil, fmt.Errorf("kubeconfig secret %s has no 'value' key", secretName)
+	}
+
+	// Build REST config from kubeconfig.
+	restConfig, err := clientcmd.RESTConfigFromKubeConfig(kubeconfigData)
+	if err != nil {
+		return nil, fmt.Errorf("parsing kubeconfig: %w", err)
+	}
+
+	// Create a Kubernetes clientset for the workload cluster.
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("creating workload cluster client: %w", err)
+	}
+
+	// List nodes belonging to this node pool.
+	nodeList, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("cloud.google.com/gke-nodepool=%s", nodePoolName),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing workload cluster nodes: %w", err)
+	}
+
+	info := &nodePoolInfo{}
+	for i := range nodeList.Items {
+		node := &nodeList.Items[i]
+		if node.Spec.ProviderID != "" {
+			info.ProviderIDList = append(info.ProviderIDList, node.Spec.ProviderID)
+		}
+		info.Replicas++
+		if isNodeReady(node) {
+			info.ReadyReplicas++
+		}
+	}
+
+	// Sort for deterministic output.
+	sort.Strings(info.ProviderIDList)
+	return info, nil
+}
+
+// isNodeReady returns true if the node has condition Ready=True.
+func isNodeReady(node *corev1.Node) bool {
+	for _, c := range node.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }

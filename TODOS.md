@@ -169,10 +169,26 @@ See docs/proposals/config-connector-integration.md for full design.
 
 ### Known limitations (future work)
 
-- [ ] **providerIDList** — Not populated. CAPI MachinePool stays in `ScalingUp`. Needs GCP Compute API or workload cluster Node listing.
-- [ ] **readyReplicas** — Not set on GCPKCCManagedMachinePool.
-- [ ] **status.failureDomains** — Infra cluster should expose zones from ContainerCluster `spec.nodeLocations` (via merge).
-- [ ] **Cluster phase** — Stuck at `Provisioning` due to missing providerIDList/readyReplicas.
+- [x] **providerIDList** — Populated via workload cluster Node listing (kubeconfig secret + label `cloud.google.com/gke-nodepool`).
+- [x] **readyReplicas** — Set from workload cluster ready Node count.
+- [x] **status.failureDomains** — Populated from ContainerCluster `spec.nodeLocations` (via merge).
+- [x] **Cluster phase** — Now transitions to `Provisioned` / MachinePool to `Running`.
+
+## CAPI Status & Replicas Fixes (Addendum A21-A25) — WIP, needs review
+
+- [x] **A21: providerIDList from workload cluster** — Added `getNodePoolInfoFromWorkloadCluster` helper in `gcpkcc_helpers.go`. Connects via kubeconfig secret, lists Nodes by `cloud.google.com/gke-nodepool` label, extracts `spec.providerID`. Populates `spec.providerIDList`, `status.replicas`, `status.readyReplicas`.
+- [x] **A22: failureDomains from ContainerCluster** — Added `getFailureDomains` method on cluster controller. Reads `spec.nodeLocations` from live KCC ContainerCluster. RBAC added for `containerclusters` get/list/watch.
+- [x] **A23: patch.NewHelper for all KCC controllers** — Replaced manual `client.MergeFrom` status-only patch with CAPI `patch.NewHelper` (patches spec+status together). Fixes issue where separate spec patch (providerIDList) overwrote in-memory status changes.
+- [x] **A24: Replicas zone division** — GKE `nodeCount`/`initialNodeCount` is per-zone; CAPI `replicas` is total. Added zone division: `nodeCount = replicas / numZones`. Zone count from `MachinePool.spec.failureDomains` or `infraCluster.status.failureDomains`. Validates `replicas % numZones == 0`. Uses `nodeCount` (resize field) instead of `initialNodeCount` (creation-only).
+- [x] **A25: Autoscaling awareness** — When `spec.autoscaling` is present in node pool, maps `replicas` → `autoscaling.totalMinNodeCount` instead of `nodeCount`. Autoscaler manages actual count.
+
+### Known limitations (needs in-depth review)
+
+- [ ] **Cluster CP columns empty** — CAPI v1beta2 contract expects `spec.replicas`, `status.replicas`, `status.availableReplicas`, `status.upToDateReplicas` on control plane object. Even with `externalManagedControlPlane=true`, CAPI reads these. Need to set all to 1 for managed GKE CP.
+- [ ] **Cluster Worker columns empty** — CAPI MachinePool shows correct values but Cluster aggregation is empty. Investigate v1beta2 contract field propagation.
+- [ ] **Cluster Version column empty** — Requires `spec.topology.version` (topology/ClusterClass mode only). Expected for non-topology.
+- [ ] **Condition visibility on defaults errors** — Errors from `applyMachinePoolDefaults` (e.g. "replicas must be multiple of zone count") only appear in controller logs, not as conditions on GCPKCCManagedMachinePool.
+- [ ] **status.version on MachinePool** — Set on GCPKCCManagedMachinePool but not propagated to CAPI MachinePool VERSION column.
 
 ---
 

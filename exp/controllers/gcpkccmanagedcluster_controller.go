@@ -38,9 +38,11 @@ import (
 
 	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-gcp/util/reconciler"
+	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
+	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 )
 
@@ -56,6 +58,7 @@ type GCPKCCManagedClusterReconciler struct {
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=gcpkccmanagedclusters/finalizers,verbs=update
 //+kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=gcpkccmanagedcontrolplanes,verbs=get;list;watch
 //+kubebuilder:rbac:groups=compute.cnrm.cloud.google.com,resources=computenetworks;computesubnetworks,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=container.cnrm.cloud.google.com,resources=containerclusters,verbs=get;list;watch
 //+kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/status,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -90,12 +93,15 @@ func (r *GCPKCCManagedClusterReconciler) Reconcile(ctx context.Context, req ctrl
 		return ctrl.Result{}, nil
 	}
 
-	// 4. Defer status patch — captures a snapshot now and patches only the diff
-	// at the end of reconciliation, ensuring status is always updated regardless
-	// of which code path returns (success, error, or early exit).
-	patchBase := client.MergeFrom(kccCluster.DeepCopy())
+	// 4. Defer patch — snapshots the object now and patches spec+status together
+	// at the end of reconciliation, matching the scope-based pattern used by
+	// existing CAPG controllers.
+	patchHelper, err := patch.NewHelper(kccCluster, r.Client)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to init patch helper: %w", err)
+	}
 	defer func() {
-		if err := r.Status().Patch(ctx, kccCluster, patchBase); err != nil && reterr == nil {
+		if err := patchHelper.Patch(ctx, kccCluster); err != nil && reterr == nil {
 			reterr = err
 		}
 	}()
@@ -293,6 +299,15 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 			kccCluster.Spec.ControlPlaneEndpoint = controlPlane.Spec.ControlPlaneEndpoint
 		}
 
+		// Populate failureDomains from KCC ContainerCluster nodeLocations.
+		if controlPlane != nil && controlPlane.Status.ClusterName != "" {
+			if fd, err := r.getFailureDomains(ctx, controlPlane.Status.ClusterName, kccCluster.Namespace); err != nil {
+				log.Error(err, "Failed to get failure domains, will retry")
+			} else if len(fd) > 0 {
+				kccCluster.Status.FailureDomains = fd
+			}
+		}
+
 		log.Info("GCPKCCManagedCluster is ready")
 		return ctrl.Result{}, nil
 	}
@@ -313,6 +328,29 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 
 	log.Info("KCC resources not yet ready, requeueing", "networkReady", networkReady, "subnetworkReady", subnetworkReady)
 	return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
+}
+
+// getFailureDomains fetches the KCC ContainerCluster and reads spec.nodeLocations
+// (populated via state-into-spec: merge) to build the failure domains map.
+func (r *GCPKCCManagedClusterReconciler) getFailureDomains(ctx context.Context, clusterName, namespace string) (clusterv1beta1.FailureDomains, error) {
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(infrav1exp.ContainerClusterGVK)
+	if err := r.Get(ctx, types.NamespacedName{Name: clusterName, Namespace: namespace}, existing); err != nil {
+		return nil, fmt.Errorf("getting KCC ContainerCluster: %w", err)
+	}
+
+	nodeLocations, found, _ := unstructured.NestedStringSlice(existing.Object, "spec", "nodeLocations")
+	if !found || len(nodeLocations) == 0 {
+		return nil, nil
+	}
+
+	fd := make(clusterv1beta1.FailureDomains, len(nodeLocations))
+	for _, zone := range nodeLocations {
+		fd[zone] = clusterv1beta1.FailureDomainSpec{
+			ControlPlane: false,
+		}
+	}
+	return fd, nil
 }
 
 func (r *GCPKCCManagedClusterReconciler) reconcileDelete(ctx context.Context, kccCluster *infrav1exp.GCPKCCManagedCluster, cluster *clusterv1.Cluster) (ctrl.Result, error) {

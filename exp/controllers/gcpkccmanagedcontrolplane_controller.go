@@ -47,6 +47,7 @@ import (
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
+	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/predicates"
 )
 
@@ -97,12 +98,15 @@ func (r *GCPKCCManagedControlPlaneReconciler) Reconcile(ctx context.Context, req
 		return ctrl.Result{}, nil
 	}
 
-	// 4. Defer status patch — captures a snapshot now and patches only the diff
-	// at the end of reconciliation, ensuring status is always updated regardless
-	// of which code path returns (success, error, or early exit).
-	patchBase := client.MergeFrom(kccCP.DeepCopy())
+	// 4. Defer patch — snapshots the object now and patches spec+status together
+	// at the end of reconciliation, matching the scope-based pattern used by
+	// existing CAPG controllers.
+	patchHelper, err := patch.NewHelper(kccCP, r.Client)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to init patch helper: %w", err)
+	}
 	defer func() {
-		if err := r.Status().Patch(ctx, kccCP, patchBase); err != nil && reterr == nil {
+		if err := patchHelper.Patch(ctx, kccCP); err != nil && reterr == nil {
 			reterr = err
 		}
 	}()

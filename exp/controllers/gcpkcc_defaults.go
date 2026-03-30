@@ -95,6 +95,20 @@ func getRawName(raw *runtime.RawExtension) string {
 	return getRawMetadataString(m, "name")
 }
 
+// getAutoscaling returns the autoscaling map from the node pool spec, or nil
+// if autoscaling is not configured.
+func getAutoscaling(spec map[string]interface{}) map[string]interface{} {
+	raw, ok := spec["autoscaling"]
+	if !ok {
+		return nil
+	}
+	m, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return m
+}
+
 func setIfAbsent(m map[string]interface{}, key string, value interface{}) {
 	if _, ok := m[key]; !ok {
 		m[key] = value
@@ -249,7 +263,7 @@ func applyControlPlaneDefaults(kccCP *infrav1exp.GCPKCCManagedControlPlane, clus
 
 // applyMachinePoolDefaults sets defaults and CAPI overrides on the ContainerNodePool
 // KCC resource for the given GCPKCCManagedMachinePool.
-func applyMachinePoolDefaults(kccMMP *infrav1exp.GCPKCCManagedMachinePool, machinePool *clusterv1.MachinePool, controlPlane *infrav1exp.GCPKCCManagedControlPlane, existingCluster *unstructured.Unstructured) error {
+func applyMachinePoolDefaults(kccMMP *infrav1exp.GCPKCCManagedMachinePool, machinePool *clusterv1.MachinePool, controlPlane *infrav1exp.GCPKCCManagedControlPlane, existingCluster *unstructured.Unstructured, infraCluster *infrav1exp.GCPKCCManagedCluster) error {
 	npMap, err := rawToMap(kccMMP.Spec.NodePool)
 	if err != nil {
 		return fmt.Errorf("parsing nodepool: %w", err)
@@ -283,19 +297,45 @@ func applyMachinePoolDefaults(kccMMP *infrav1exp.GCPKCCManagedMachinePool, machi
 		}
 	}
 
-	// CAPI overrides
-	if machinePool.Spec.Replicas != nil {
-		spec["initialNodeCount"] = int64(*machinePool.Spec.Replicas)
-	}
-	if machinePool.Spec.Template.Spec.Version != "" {
-		spec["version"] = machinePool.Spec.Template.Spec.Version
-	}
+	// CAPI overrides: failureDomains → nodeLocations
 	if len(machinePool.Spec.FailureDomains) > 0 {
 		locs := make([]interface{}, len(machinePool.Spec.FailureDomains))
 		for i, l := range machinePool.Spec.FailureDomains {
 			locs[i] = l
 		}
 		spec["nodeLocations"] = locs
+	}
+	if machinePool.Spec.Template.Spec.Version != "" {
+		spec["version"] = machinePool.Spec.Template.Spec.Version
+	}
+
+	// CAPI overrides: replicas → nodeCount (with autoscaling awareness)
+	if machinePool.Spec.Replicas != nil {
+		replicas := int64(*machinePool.Spec.Replicas)
+		if autoscaling := getAutoscaling(spec); autoscaling != nil {
+			// Autoscaling mode: map replicas to totalMinNodeCount.
+			// The autoscaler manages actual node count; skip nodeCount override.
+			autoscaling["totalMinNodeCount"] = replicas
+		} else {
+			// Determine zone count for per-zone division.
+			// GKE's nodeCount/initialNodeCount is per-zone; CAPI replicas is total.
+			var numZones int64
+			switch {
+			case len(machinePool.Spec.FailureDomains) > 0:
+				numZones = int64(len(machinePool.Spec.FailureDomains))
+			case len(infraCluster.Status.FailureDomains) > 0:
+				numZones = int64(len(infraCluster.Status.FailureDomains))
+			default:
+				return fmt.Errorf("cannot determine zone count: neither MachinePool.spec.failureDomains nor infrastructure cluster failureDomains are set; waiting for infrastructure to be ready")
+			}
+			if replicas%numZones != 0 {
+				return fmt.Errorf("replicas (%d) must be a multiple of zone count (%d)",
+					replicas, numZones)
+			}
+			perZone := replicas / numZones
+			spec["nodeCount"] = perZone
+			setIfAbsent(spec, "initialNodeCount", perZone)
+		}
 	}
 
 	kccMMP.Spec.NodePool, err = mapToRaw(npMap)
