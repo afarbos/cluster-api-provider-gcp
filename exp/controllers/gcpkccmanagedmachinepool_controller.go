@@ -297,6 +297,12 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 
 	// 5. Apply defaults and CAPI overrides.
 	if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP, existingCluster, kccInfraCluster); err != nil {
+		apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
+			Type:    infrav1exp.ReadyCondition,
+			Status:  metav1.ConditionFalse,
+			Reason:  "ConfigurationError",
+			Message: err.Error(),
+		})
 		return ctrl.Result{}, fmt.Errorf("applying defaults: %w", err)
 	}
 

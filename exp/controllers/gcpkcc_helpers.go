@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"sort"
 
+	"golang.org/x/mod/semver"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,10 +31,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
-
 
 // getKCCReadiness checks whether a KCC unstructured resource has a Ready
 // condition with status "True" and returns (ready, message).
@@ -217,6 +219,31 @@ func getNodePoolInfoFromWorkloadCluster(ctx context.Context, mgmtClient client.C
 	// Sort for deterministic output.
 	sort.Strings(info.ProviderIDList)
 	return info, nil
+}
+
+// isVersionUpToDate returns true if the observed version's major.minor is >= the
+// desired version's major.minor. GKE auto-upgrades can result in observed > desired.
+// Returns true if desired is empty (no version constraint).
+// Uses golang.org/x/mod/semver (already a CAPG dependency) for comparison.
+func isVersionUpToDate(desired, observed string) bool {
+	if desired == "" {
+		return true
+	}
+	// semver requires "v" prefix; MajorMinor strips patch/pre-release (e.g., "-gke.1026000").
+	d := semver.MajorMinor("v" + desired)
+	o := semver.MajorMinor("v" + observed)
+	if d == "" || o == "" {
+		return false
+	}
+	return semver.Compare(o, d) >= 0
+}
+
+// boolToReplicaCount returns ptr.To(int32(1)) if true, ptr.To(int32(0)) if false.
+func boolToReplicaCount(b bool) *int32 {
+	if b {
+		return ptr.To(int32(1))
+	}
+	return ptr.To(int32(0))
 }
 
 // isNodeReady returns true if the node has condition Ready=True.

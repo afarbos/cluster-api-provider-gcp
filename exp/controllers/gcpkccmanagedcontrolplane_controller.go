@@ -154,6 +154,14 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 	log := log.FromContext(ctx).WithValues("controller", "gcpkccmanagedcontrolplane")
 	log.Info("Reconciling GCPKCCManagedControlPlane")
 
+	// CAPI v1beta2 contract: managed GKE has one control plane unit.
+	// Set replicas=1 unconditionally (CP exists), ready/available/upToDate
+	// are set to 1 only when the CP is actually ready (below).
+	kccCP.Status.Replicas = ptr.To(int32(1))
+	kccCP.Status.ReadyReplicas = boolToReplicaCount(false)
+	kccCP.Status.AvailableReplicas = boolToReplicaCount(false)
+	kccCP.Status.UpToDateReplicas = boolToReplicaCount(false)
+
 	// 1. Add finalizer.
 	if controllerutil.AddFinalizer(kccCP, infrav1exp.KCCManagedControlPlaneFinalizer) {
 		patchBase := client.MergeFrom(kccCP.DeepCopy())
@@ -256,6 +264,11 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 		if masterVersion != "" {
 			kccCP.Status.Version = &masterVersion
 		}
+
+		// CAPI v1beta2 contract: CP is ready and available.
+		kccCP.Status.ReadyReplicas = boolToReplicaCount(true)
+		kccCP.Status.AvailableReplicas = boolToReplicaCount(true)
+		kccCP.Status.UpToDateReplicas = boolToReplicaCount(isVersionUpToDate(ptr.Deref(kccCP.Spec.Version, ""), masterVersion))
 
 		apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{
 			Type:    infrav1exp.ReadyCondition,

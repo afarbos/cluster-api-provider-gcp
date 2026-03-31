@@ -95,6 +95,11 @@ spec:
             description: GCPKCCManagedControlPlaneStatus defines the observed state
               of GCPKCCManagedControlPlane.
             properties:
+              availableReplicas:
+                description: AvailableReplicas is the number of available control
+                  plane instances.
+                format: int32
+                type: integer
               clusterName:
                 description: ClusterName is the name of the KCC ContainerCluster resource.
                 type: string
@@ -175,6 +180,20 @@ spec:
                 default: false
                 description: Ready indicates that the control plane is ready.
                 type: boolean
+              readyReplicas:
+                description: ReadyReplicas is the number of ready control plane instances.
+                format: int32
+                type: integer
+              replicas:
+                description: Replicas is the number of control plane instances. Always
+                  1 for managed GKE.
+                format: int32
+                type: integer
+              upToDateReplicas:
+                description: UpToDateReplicas is the number of up-to-date control
+                  plane instances.
+                format: int32
+                type: integer
               version:
                 description: Version is the observed Kubernetes version of the control
                   plane.

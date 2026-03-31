@@ -73,6 +73,22 @@ type GCPKCCManagedControlPlaneStatus struct {
 	// ClusterName is the name of the KCC ContainerCluster resource.
 	// +optional
 	ClusterName string `json:"clusterName,omitempty"`
+
+	// Replicas is the number of control plane instances. Always 1 for managed GKE.
+	// +optional
+	Replicas *int32 `json:"replicas,omitempty"`
+
+	// ReadyReplicas is the number of ready control plane instances.
+	// +optional
+	ReadyReplicas *int32 `json:"readyReplicas,omitempty"`
+
+	// AvailableReplicas is the number of available control plane instances.
+	// +optional
+	AvailableReplicas *int32 `json:"availableReplicas,omitempty"`
+
+	// UpToDateReplicas is the number of up-to-date control plane instances.
+	// +optional
+	UpToDateReplicas *int32 `json:"upToDateReplicas,omitempty"`
 }
 
 // GCPKCCManagedControlPlaneInitializationStatus contains control plane initialization status.
