@@ -20,7 +20,9 @@ settings = {
     "kind_cluster_name": "capg",
     "capi_version": "v1.11.0",
     "cert_manager_version": "v1.14.4",
+    "config_connector_version": "1.146.0",
     "kubernetes_version": "v1.33.2",
+    "deploy_config_connector": False,
 }
 
 keys = ["GCP_B64ENCODED_CREDENTIALS"]
@@ -196,6 +198,23 @@ def waitforsystem():
     local(kubectl_cmd + " wait --for=condition=ready --timeout=300s pod --all -n capi-kubeadm-control-plane-system")
     local(kubectl_cmd + " wait --for=condition=ready --timeout=300s pod --all -n capi-system")
 
+def deploy_config_connector():
+    """Install Config Connector (blocking — must complete before CAPG starts)."""
+    version = settings.get("config_connector_version", "1.146.0")
+    substitutions = settings.get("kustomize_substitutions", {})
+    gcp_creds = substitutions.get("GCP_B64ENCODED_CREDENTIALS", "")
+
+    if not gcp_creds:
+        fail("deploy_config_connector requires GCP_B64ENCODED_CREDENTIALS in kustomize_substitutions")
+
+    # Decode credentials via python to avoid shell quoting issues with base64 strings
+    local("python3 -c \"import base64; open('/tmp/kcc-sa-key.json','wb').write(base64.b64decode('{}'))\"".format(gcp_creds), quiet = True)
+    gcp_project = str(local("python3 -c \"import json; print(json.load(open('/tmp/kcc-sa-key.json'))['project_id'])\"", quiet = True)).strip()
+    local(
+        "GCP_PROJECT={} GOOGLE_APPLICATION_CREDENTIALS=/tmp/kcc-sa-key.json ./hack/install-config-connector.sh {}".format(gcp_project, version),
+    )
+    local("rm -f /tmp/kcc-sa-key.json", quiet = True)
+
 ##############################
 # Actual work happens here
 ##############################
@@ -210,6 +229,11 @@ if settings.get("deploy_cert_manager"):
     deploy_cert_manager()
 
 deploy_capi()
+
+# Config Connector must be installed before CAPG because the KCC controllers
+# check for KCC CRDs at startup and fail if they are not present.
+if settings.get("deploy_config_connector"):
+    deploy_config_connector()
 
 capg()
 

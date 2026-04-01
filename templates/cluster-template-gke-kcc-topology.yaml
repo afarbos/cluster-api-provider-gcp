@@ -1,0 +1,27 @@
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: Cluster
+metadata:
+  name: "${CLUSTER_NAME}"
+  namespace: default
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks: ["10.100.0.0/16"]
+    services:
+      cidrBlocks: ["10.101.0.0/16"]
+  topology:
+    classRef:
+      name: "${CLUSTER_CLASS_NAME}"
+    version: "${KUBERNETES_VERSION}"
+    variables:
+    - name: gcpProject
+      value: "${GCP_PROJECT}"
+    - name: region
+      value: "${GCP_REGION}"
+    controlPlane:
+      replicas: 1
+    workers:
+      machinePools:
+      - class: ${GCP_MACHINE_TYPE}-worker
+        name: mp-0
+        replicas: ${WORKER_MACHINE_COUNT}

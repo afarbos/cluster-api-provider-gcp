@@ -1,0 +1,206 @@
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: ClusterClass
+metadata:
+  name: ${CLUSTER_CLASS_NAME}
+  namespace: default
+spec:
+  controlPlane:
+    templateRef:
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+      kind: GCPKCCManagedControlPlaneTemplate
+      name: ${CLUSTER_CLASS_NAME}-control-plane
+  infrastructure:
+    templateRef:
+      apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+      kind: GCPKCCManagedClusterTemplate
+      name: ${CLUSTER_CLASS_NAME}
+  variables:
+  - name: gcpProject
+    required: true
+    schema:
+      openAPIV3Schema:
+        type: string
+  - name: region
+    required: true
+    schema:
+      openAPIV3Schema:
+        type: string
+  patches:
+  - name: gcpProject
+    definitions:
+    - selector:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: GCPKCCManagedControlPlaneTemplate
+        matchResources:
+          controlPlane: true
+      jsonPatches:
+      - op: add
+        path: /spec/template/spec/containerCluster/metadata/annotations/cnrm.cloud.google.com~1project-id
+        valueFrom:
+          variable: gcpProject
+    - selector:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: GCPKCCManagedClusterTemplate
+        matchResources:
+          infrastructureCluster: true
+      jsonPatches:
+      - op: add
+        path: /spec/template/spec/network/metadata/annotations/cnrm.cloud.google.com~1project-id
+        valueFrom:
+          variable: gcpProject
+      - op: add
+        path: /spec/template/spec/subnetwork/metadata/annotations/cnrm.cloud.google.com~1project-id
+        valueFrom:
+          variable: gcpProject
+    - selector:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: GCPKCCManagedMachinePoolTemplate
+        matchResources:
+          machinePoolClass:
+            names:
+            - ${GCP_MACHINE_TYPE}-worker
+      jsonPatches:
+      - op: add
+        path: /spec/template/spec/nodePool/metadata/annotations/cnrm.cloud.google.com~1project-id
+        valueFrom:
+          variable: gcpProject
+  - name: clusterResourceIDs
+    definitions:
+    - selector:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: GCPKCCManagedClusterTemplate
+        matchResources:
+          infrastructureCluster: true
+      jsonPatches:
+      - op: add
+        path: /spec/template/spec/network/spec/resourceID
+        valueFrom:
+          template: "{{ .builtin.cluster.name }}"
+      - op: add
+        path: /spec/template/spec/subnetwork/spec/resourceID
+        valueFrom:
+          template: "{{ .builtin.cluster.name }}"
+    - selector:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: GCPKCCManagedControlPlaneTemplate
+        matchResources:
+          controlPlane: true
+      jsonPatches:
+      - op: add
+        path: /spec/template/spec/containerCluster/spec/resourceID
+        valueFrom:
+          template: "{{ .builtin.cluster.name }}"
+  - name: workerPoolResourceID
+    definitions:
+    - selector:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: GCPKCCManagedMachinePoolTemplate
+        matchResources:
+          machinePoolClass:
+            names:
+            - ${GCP_MACHINE_TYPE}-worker
+      jsonPatches:
+      - op: add
+        path: /spec/template/spec/nodePool/spec/resourceID
+        valueFrom:
+          template: "{{ .builtin.cluster.name }}-{{ .builtin.machinePool.topologyName }}"
+  - name: region
+    definitions:
+    - selector:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: GCPKCCManagedControlPlaneTemplate
+        matchResources:
+          controlPlane: true
+      jsonPatches:
+      - op: add
+        path: /spec/template/spec/containerCluster/spec/location
+        valueFrom:
+          variable: region
+    - selector:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: GCPKCCManagedClusterTemplate
+        matchResources:
+          infrastructureCluster: true
+      jsonPatches:
+      - op: add
+        path: /spec/template/spec/subnetwork/spec/region
+        valueFrom:
+          variable: region
+  - name: controlPlaneVersion
+    definitions:
+    - selector:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: GCPKCCManagedControlPlaneTemplate
+        matchResources:
+          controlPlane: true
+      jsonPatches:
+      - op: add
+        path: /spec/template/spec/version
+        valueFrom:
+          template: "{{ .builtin.controlPlane.version }}"
+  workers:
+    machinePools:
+    - class: ${GCP_MACHINE_TYPE}-worker
+      bootstrap:
+        templateRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+          kind: GKEConfigTemplate
+          name: ${CLUSTER_CLASS_NAME}-${GCP_MACHINE_TYPE}
+      infrastructure:
+        templateRef:
+          apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+          kind: GCPKCCManagedMachinePoolTemplate
+          name: ${CLUSTER_CLASS_NAME}-${GCP_MACHINE_TYPE}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: GCPKCCManagedControlPlaneTemplate
+metadata:
+  name: "${CLUSTER_CLASS_NAME}-control-plane"
+spec:
+  template:
+    spec:
+      containerCluster:
+        metadata:
+          annotations: {}
+        spec: {}
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: GCPKCCManagedClusterTemplate
+metadata:
+  name: ${CLUSTER_CLASS_NAME}
+spec:
+  template:
+    spec:
+      network:
+        metadata:
+          annotations: {}
+        spec: {}
+      subnetwork:
+        metadata:
+          annotations: {}
+        spec:
+          ipCidrRange: "10.0.0.0/20"
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: GCPKCCManagedMachinePoolTemplate
+metadata:
+  name: ${CLUSTER_CLASS_NAME}-${GCP_MACHINE_TYPE}
+  namespace: default
+spec:
+  template:
+    spec:
+      nodePool:
+        metadata:
+          annotations: {}
+        spec:
+          nodeConfig:
+            machineType: ${GCP_MACHINE_TYPE}
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
+kind: GKEConfigTemplate
+metadata:
+  name: ${CLUSTER_CLASS_NAME}-${GCP_MACHINE_TYPE}
+  namespace: default
+spec:
+  template:
+    spec: {}

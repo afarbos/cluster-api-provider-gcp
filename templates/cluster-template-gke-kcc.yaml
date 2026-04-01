@@ -1,0 +1,87 @@
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: Cluster
+metadata:
+  name: "${CLUSTER_NAME}"
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks: ["10.100.0.0/16"]
+    services:
+      cidrBlocks: ["10.101.0.0/16"]
+  infrastructureRef:
+    apiGroup: infrastructure.cluster.x-k8s.io
+    kind: GCPKCCManagedCluster
+    name: "${CLUSTER_NAME}"
+  controlPlaneRef:
+    apiGroup: infrastructure.cluster.x-k8s.io
+    kind: GCPKCCManagedControlPlane
+    name: "${CLUSTER_NAME}-control-plane"
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: GCPKCCManagedCluster
+metadata:
+  name: "${CLUSTER_NAME}"
+spec:
+  network:
+    metadata:
+      annotations:
+        cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
+    spec:
+      # Set resourceID to an existing VPC network name to adopt it (BYOI).
+      resourceID: "${CLUSTER_NAME}"
+  subnetwork:
+    metadata:
+      annotations:
+        cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
+    spec:
+      ipCidrRange: "10.0.0.0/20"
+      region: "${GCP_REGION}"
+      # Set resourceID to an existing subnetwork name to adopt it (BYOI).
+      resourceID: "${CLUSTER_NAME}"
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: GCPKCCManagedControlPlane
+metadata:
+  name: "${CLUSTER_NAME}-control-plane"
+spec:
+  containerCluster:
+    metadata:
+      annotations:
+        cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
+    spec:
+      # Set resourceID to an existing GKE cluster name to adopt it (BYOI).
+      resourceID: "${CLUSTER_NAME}"
+  version: "${KUBERNETES_VERSION}"
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachinePool
+metadata:
+  name: "${CLUSTER_NAME}-mp-0"
+spec:
+  clusterName: "${CLUSTER_NAME}"
+  replicas: ${WORKER_MACHINE_COUNT}
+  template:
+    spec:
+      bootstrap:
+        dataSecretName: ""
+      clusterName: "${CLUSTER_NAME}"
+      infrastructureRef:
+        apiGroup: infrastructure.cluster.x-k8s.io
+        kind: GCPKCCManagedMachinePool
+        name: "${CLUSTER_NAME}-mp-0"
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: GCPKCCManagedMachinePool
+metadata:
+  name: "${CLUSTER_NAME}-mp-0"
+spec:
+  nodePool:
+    metadata:
+      annotations:
+        cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
+    spec:
+      # Set resourceID to an existing node pool name to adopt it (BYOI).
+      resourceID: "${CLUSTER_NAME}-mp-0"
+      nodeConfig:
+        machineType: e2-medium

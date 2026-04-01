@@ -24,7 +24,6 @@ import (
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -33,8 +32,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
+	infrav1v2 "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta2"
 	bootstrapv1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/bootstrap/gke/api/v1beta1"
+	"sigs.k8s.io/cluster-api-provider-gcp/util/reconciler"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	exputil "sigs.k8s.io/cluster-api/exp/util"
 	"sigs.k8s.io/cluster-api/util/predicates"
 )
 
@@ -58,7 +60,11 @@ func (r *GKEConfigReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Man
 		WithEventFilter(predicates.ResourceHasFilterLabel(mgr.GetScheme(), log, r.WatchFilterValue)).
 		Watches(
 			&infrav1exp.GCPManagedMachinePool{},
-			handler.EnqueueRequestsFromMapFunc(r.ManagedMachinePoolToGKEConfigMapFunc),
+			handler.EnqueueRequestsFromMapFunc(r.infraMachinePoolToGKEConfigMapFunc),
+		).
+		Watches(
+			&infrav1v2.GCPKCCManagedMachinePool{},
+			handler.EnqueueRequestsFromMapFunc(r.infraMachinePoolToGKEConfigMapFunc),
 		)
 
 	_, err := b.Build(r)
@@ -82,101 +88,86 @@ func (r *GKEConfigReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	log = log.WithValues("GKEConfig", config.GetName())
 
-	machinePool, err := getOwnerMachinePool(ctx, r.Client, config.ObjectMeta)
+	machinePool, err := exputil.GetOwnerMachinePool(ctx, r.Client, config.ObjectMeta)
 	if err != nil {
-		log.Error(err, "Failed to get owner MachinePool for GKEConfig", "GKEConfig", config.GetName())
+		log.Error(err, "Failed to get owner MachinePool")
 		return ctrl.Result{}, err
 	}
-
 	if machinePool == nil {
-		log.Info("No owner MachinePool found for GKEConfig", "GKEConfig", config.GetName())
-		return ctrl.Result{}, nil
+		log.Info("No owner MachinePool found yet, requeueing")
+		return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
 	}
 
-	// fetch associated GCPManagedMachinePool
-	gcpMP := &infrav1exp.GCPManagedMachinePool{}
-	gcpMPKey := types.NamespacedName{
-		Name:      machinePool.Spec.Template.Spec.InfrastructureRef.Name,
-		Namespace: machinePool.Namespace,
-	}
-	if err := r.Get(ctx, gcpMPKey, gcpMP); err != nil {
+	// Fetch the infrastructure machine pool and check readiness.
+	infraRef := machinePool.Spec.Template.Spec.InfrastructureRef
+	ready, err := getInfraMachinePoolReady(ctx, r.Client, infraRef, machinePool.Namespace)
+	if err != nil {
 		if apierrors.IsNotFound(err) {
-			log.Info("GCPManagedMachinePool not found for MachinePool", "GCPManagedMachinePool", gcpMPKey)
-			return ctrl.Result{}, nil
+			log.Info("Infrastructure machine pool not found, requeueing", "kind", infraRef.Kind, "name", infraRef.Name)
+			return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
 		}
 		return ctrl.Result{}, err
 	}
-
-	// check if GCPManagedMachinePool is ready
-	if !gcpMP.Status.Ready {
-		log.Info("Waiting for GCPManagedMachinePool to be ready", "GKEConfig", config.GetName(), "GCPManagedMachinePool", gcpMPKey)
-		return ctrl.Result{}, nil
+	if !ready {
+		log.Info("Waiting for infrastructure machine pool to be ready, requeueing", "kind", infraRef.Kind, "name", infraRef.Name)
+		return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
 	}
 
-	// set GKEConfig as ready when GCPManagedMachinePool becomes ready
 	config.Status.Ready = true
 	if err := r.Status().Update(ctx, config); err != nil {
-		log.Info("Failed to update GKEConfig status", "GKEConfig", config.GetName(), "error", err)
+		log.Error(err, "Failed to update GKEConfig status")
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Successfully reconciled GKEConfig", "GKEConfig", req.NamespacedName, "MachinePool", machinePool.GetName())
-
+	log.Info("Successfully reconciled GKEConfig", "MachinePool", machinePool.GetName())
 	return ctrl.Result{}, nil
 }
 
-// ManagedMachinePoolToGKEConfigMapFunc is a handler.ToRequestsFunc to be used to enqueue requests for
-// GKEConfig reconciliation.
-func (r *GKEConfigReconciler) ManagedMachinePoolToGKEConfigMapFunc(_ context.Context, o client.Object) []ctrl.Request {
-	c, ok := o.(*infrav1exp.GCPManagedMachinePool)
-	if !ok {
-		klog.Errorf("Expected a Cluster but got a %T", o)
+// getInfraMachinePoolReady fetches the infrastructure machine pool and returns
+// whether it is ready. Uses typed clients — no CRD RBAC required.
+func getInfraMachinePoolReady(ctx context.Context, c client.Client, ref clusterv1.ContractVersionedObjectReference, namespace string) (bool, error) {
+	var obj client.Object
+	var getReady func() bool
+	switch ref.Kind {
+	case "GCPKCCManagedMachinePool":
+		t := &infrav1v2.GCPKCCManagedMachinePool{}
+		obj, getReady = t, func() bool { return t.Status.Ready }
+	default:
+		t := &infrav1exp.GCPManagedMachinePool{}
+		obj, getReady = t, func() bool { return t.Status.Ready }
 	}
+	if err := c.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: namespace}, obj); err != nil {
+		return false, err
+	}
+	return getReady(), nil
+}
 
-	machinePool, err := getOwnerMachinePool(context.Background(), r.Client, c.ObjectMeta)
+// infraMachinePoolToGKEConfigMapFunc maps infrastructure machine pool changes
+// to the GKEConfig via the owner MachinePool chain. Works for any infra type.
+func (r *GKEConfigReconciler) infraMachinePoolToGKEConfigMapFunc(_ context.Context, o client.Object) []ctrl.Request {
+	machinePool, err := exputil.GetOwnerMachinePool(context.Background(), r.Client, metav1.ObjectMeta{
+		OwnerReferences: o.GetOwnerReferences(),
+		Namespace:       o.GetNamespace(),
+	})
 	if err != nil {
-		klog.Errorf("Failed to get owner MachinePool for GCPManagedMachinePool %s/%s: %v", c.Namespace, c.Name, err)
+		klog.Errorf("Failed to get owner MachinePool for %T %s/%s: %v", o, o.GetNamespace(), o.GetName(), err)
+		return nil
+	}
+	if machinePool == nil {
 		return nil
 	}
 
-	if machinePool == nil {
-		klog.Infof("No owner MachinePool found for GCPManagedMachinePool %s/%s", c.Namespace, c.Name)
+	bootstrapRef := machinePool.Spec.Template.Spec.Bootstrap.ConfigRef
+	if !bootstrapRef.IsDefined() {
 		return nil
 	}
 
 	return []ctrl.Request{
 		{
 			NamespacedName: client.ObjectKey{
-				Name:      machinePool.Spec.Template.Spec.InfrastructureRef.Name,
+				Name:      bootstrapRef.Name,
 				Namespace: machinePool.Namespace,
 			},
 		},
 	}
-}
-
-func getOwnerMachinePool(ctx context.Context, c client.Client, obj metav1.ObjectMeta) (*clusterv1.MachinePool, error) {
-	for _, ref := range obj.OwnerReferences {
-		if ref.Kind != "MachinePool" {
-			continue
-		}
-		gv, err := schema.ParseGroupVersion(ref.APIVersion)
-		if err != nil {
-			return nil, errors.WithStack(err)
-		}
-		if gv.Group == clusterv1.GroupVersion.Group {
-			return getMachinePoolByName(ctx, c, obj.Namespace, ref.Name)
-		}
-	}
-
-	return nil, nil
-}
-
-func getMachinePoolByName(ctx context.Context, c client.Client, namespace, name string) (*clusterv1.MachinePool, error) {
-	m := &clusterv1.MachinePool{}
-	key := client.ObjectKey{Name: name, Namespace: namespace}
-	if err := c.Get(ctx, key, m); err != nil {
-		return nil, err
-	}
-
-	return m, nil
 }

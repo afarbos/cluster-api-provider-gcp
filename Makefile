@@ -118,6 +118,7 @@ YQ :=  $(TOOLS_BIN_DIR)/$(YQ_BIN)-$(YQ_VER)
 
 # Other tools versions
 CERT_MANAGER_VER := v1.16.3
+CONF_CONNECTOR_VER ?= 1.146.0
 
 # Define Docker related variables. Releases should modify and double check these vars.
 export GCP_PROJECT ?= $(shell gcloud config get-value project)
@@ -536,6 +537,13 @@ create-workload-cluster: $(KUSTOMIZE) $(ENVSUBST) $(KUBECTL)
 	$(KUBECTL) --kubeconfig=$(CAPG_WORKER_CLUSTER_KUBECONFIG) apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.25.0/manifests/calico.yaml
 
 	@echo 'run "$(KUBECTL) --kubeconfig=$(CAPG_WORKER_CLUSTER_KUBECONFIG) ..." to work with the new target cluster'
+
+.PHONY: install-config-connector
+install-config-connector: $(KUBECTL) ## Install Config Connector on the current cluster.
+	./hack/install-config-connector.sh $(CONF_CONNECTOR_VER)
+
+.PHONY: create-management-cluster-kcc
+create-management-cluster-kcc: create-management-cluster install-config-connector ## Create a management cluster with Config Connector support.
 
 .PHONY: create-cluster
 create-cluster: create-management-cluster create-workload-cluster ## Create a development Kubernetes cluster on GCP in a KIND management cluster.
