@@ -18,7 +18,7 @@ spec:
     kind: GCPKCCManagedControlPlane
     name: "${CLUSTER_NAME}-control-plane"
 ---
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: GCPKCCManagedCluster
 metadata:
   name: "${CLUSTER_NAME}"
@@ -40,7 +40,7 @@ spec:
       # Set resourceID to an existing subnetwork name to adopt it (BYOI).
       resourceID: "${CLUSTER_NAME}"
 ---
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: GCPKCCManagedControlPlane
 metadata:
   name: "${CLUSTER_NAME}-control-plane"
@@ -71,7 +71,7 @@ spec:
         kind: GCPKCCManagedMachinePool
         name: "${CLUSTER_NAME}-mp-0"
 ---
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
 kind: GCPKCCManagedMachinePool
 metadata:
   name: "${CLUSTER_NAME}-mp-0"
@@ -81,5 +81,7 @@ spec:
       annotations:
         cnrm.cloud.google.com/project-id: "${GCP_PROJECT}"
     spec:
+      # Set resourceID to an existing node pool name to adopt it (BYOI).
+      resourceID: "${CLUSTER_NAME}-mp-0"
       nodeConfig:
         machineType: e2-medium

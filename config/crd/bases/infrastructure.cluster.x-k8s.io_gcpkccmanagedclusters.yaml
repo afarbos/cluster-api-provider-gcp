@@ -35,7 +35,7 @@ spec:
       jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1beta1
+    name: v1beta2
     schema:
       openAPIV3Schema:
         description: GCPKCCManagedCluster is the Schema for the gcpkccmanagedclusters
@@ -64,18 +64,19 @@ spec:
               controlPlaneEndpoint:
                 description: ControlPlaneEndpoint represents the endpoint used to
                   communicate with the control plane.
+                minProperties: 1
                 properties:
                   host:
                     description: host is the hostname on which the API server is serving.
                     maxLength: 512
+                    minLength: 1
                     type: string
                   port:
                     description: port is the port on which the API server is serving.
                     format: int32
+                    maximum: 65535
+                    minimum: 1
                     type: integer
-                required:
-                - host
-                - port
                 type: object
               network:
                 description: Network defines the KCC ComputeNetwork resource (metadata
@@ -148,9 +149,10 @@ spec:
                   type: object
                 type: array
               failureDomains:
-                additionalProperties:
+                description: FailureDomains defines the failure domains for the cluster.
+                items:
                   description: |-
-                    FailureDomainSpec is the Schema for Cluster API failure domains.
+                    FailureDomain is the Schema for Cluster API failure domains.
                     It allows controllers to understand how many failure domains a cluster can optionally span across.
                   properties:
                     attributes:
@@ -163,9 +165,18 @@ spec:
                       description: controlPlane determines if this failure domain
                         is suitable for use by control plane machines.
                       type: boolean
+                    name:
+                      description: name is the name of the failure domain.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
                   type: object
-                description: FailureDomains defines the failure domains for the cluster.
-                type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               initialization:
                 description: Initialization contains fields that track the status
                   of cluster initialization.

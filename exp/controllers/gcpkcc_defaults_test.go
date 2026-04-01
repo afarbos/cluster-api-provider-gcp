@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 
-	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
+	infrav1v2 "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
@@ -109,7 +109,7 @@ func TestApplyClusterDefaults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			kccCluster := &infrav1exp.GCPKCCManagedCluster{
+			kccCluster := &infrav1v2.GCPKCCManagedCluster{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test",
 					Namespace: "default",
@@ -231,12 +231,12 @@ func TestApplyControlPlaneDefaults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			kccCP := &infrav1exp.GCPKCCManagedControlPlane{
+			kccCP := &infrav1v2.GCPKCCManagedControlPlane{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-cp",
 					Namespace: "default",
 				},
-				Spec: infrav1exp.GCPKCCManagedControlPlaneSpec{
+				Spec: infrav1v2.GCPKCCManagedControlPlaneSpec{
 					Version: tt.version,
 				},
 			}
@@ -248,11 +248,11 @@ func TestApplyControlPlaneDefaults(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: tt.clusterName},
 			}
 
-			infraCluster := &infrav1exp.GCPKCCManagedCluster{
-				Spec: infrav1exp.GCPKCCManagedClusterSpec{
+			infraCluster := &infrav1v2.GCPKCCManagedCluster{
+				Spec: infrav1v2.GCPKCCManagedClusterSpec{
 					Subnetwork: rawKCC(`{"spec":{"region":"` + tt.subnetworkRegion + `"}}`),
 				},
-				Status: infrav1exp.GCPKCCManagedClusterStatus{
+				Status: infrav1v2.GCPKCCManagedClusterStatus{
 					NetworkName:    tt.networkName,
 					SubnetworkName: tt.subnetworkName,
 				},
@@ -337,7 +337,7 @@ func TestApplyMachinePoolDefaults(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			kccMMP := &infrav1exp.GCPKCCManagedMachinePool{
+			kccMMP := &infrav1v2.GCPKCCManagedMachinePool{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      tt.mmpName,
 					Namespace: "default",
@@ -359,8 +359,8 @@ func TestApplyMachinePoolDefaults(t *testing.T) {
 				},
 			}
 
-			kccCP := &infrav1exp.GCPKCCManagedControlPlane{
-				Status: infrav1exp.GCPKCCManagedControlPlaneStatus{
+			kccCP := &infrav1v2.GCPKCCManagedControlPlane{
+				Status: infrav1v2.GCPKCCManagedControlPlaneStatus{
 					ClusterName: tt.clusterName,
 				},
 			}
@@ -373,7 +373,7 @@ func TestApplyMachinePoolDefaults(t *testing.T) {
 				},
 			}
 
-			infraCluster := &infrav1exp.GCPKCCManagedCluster{}
+			infraCluster := &infrav1v2.GCPKCCManagedCluster{}
 			if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP, existingCluster, infraCluster); err != nil {
 				t.Fatalf("applyMachinePoolDefaults() error = %v", err)
 			}

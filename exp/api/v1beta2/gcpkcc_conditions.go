@@ -14,13 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1beta1
+package v1beta2
 
 // KCC condition types and reasons.
-//
-// The overall readiness condition uses ReadyCondition defined in
-// conditions_consts.go (shared with GKE controllers).
 const (
+	// ReadyCondition is the overall Ready condition for KCC resources.
+	ReadyCondition string = "Ready"
+
 	// KCCDegradedCondition indicates the resource is in a degraded state.
 	KCCDegradedCondition = "Degraded"
 

@@ -37,7 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
+	infrav1v2 "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-gcp/util/reconciler"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
@@ -69,7 +69,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) Reconcile(ctx context.Context, req 
 	log := log.FromContext(ctx)
 
 	// 1. Get GCPKCCManagedMachinePool.
-	kccMMP := &infrav1exp.GCPKCCManagedMachinePool{}
+	kccMMP := &infrav1v2.GCPKCCManagedMachinePool{}
 	if err := r.Get(ctx, req.NamespacedName, kccMMP); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -130,22 +130,22 @@ func (r *GCPKCCManagedMachinePoolReconciler) Reconcile(ctx context.Context, req 
 func (r *GCPKCCManagedMachinePoolReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	log := ctrl.LoggerFrom(ctx)
 
-	if err := checkKCCCRDsPresent(ctx, mgr.GetClient(), infrav1exp.ContainerNodePoolGVK); err != nil {
+	if err := checkKCCCRDsPresent(ctx, mgr.GetClient(), infrav1v2.ContainerNodePoolGVK); err != nil {
 		return err
 	}
 
 	containerNodePoolObj := &unstructured.Unstructured{}
-	containerNodePoolObj.SetGroupVersionKind(infrav1exp.ContainerNodePoolGVK)
+	containerNodePoolObj.SetGroupVersionKind(infrav1v2.ContainerNodePoolGVK)
 
 	kccMMPGVK := schema.GroupVersionKind{
-		Group:   infrav1exp.GroupVersion.Group,
-		Version: infrav1exp.GroupVersion.Version,
+		Group:   infrav1v2.GroupVersion.Group,
+		Version: infrav1v2.GroupVersion.Version,
 		Kind:    "GCPKCCManagedMachinePool",
 	}
 
 	c, err := ctrl.NewControllerManagedBy(mgr).
 		WithOptions(options).
-		For(&infrav1exp.GCPKCCManagedMachinePool{}).
+		For(&infrav1v2.GCPKCCManagedMachinePool{}).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(mgr.GetScheme(), log, r.WatchFilterValue)).
 		Owns(containerNodePoolObj).
 		Watches(
@@ -153,7 +153,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) SetupWithManager(ctx context.Contex
 			handler.EnqueueRequestsFromMapFunc(machinePoolToKCCInfrastructureMapFunc(kccMMPGVK)),
 		).
 		Watches(
-			&infrav1exp.GCPKCCManagedControlPlane{},
+			&infrav1v2.GCPKCCManagedControlPlane{},
 			handler.EnqueueRequestsFromMapFunc(controlPlaneToKCCMachinePoolMapFunc(r.Client, kccMMPGVK, log)),
 		).
 		Build(r)
@@ -161,7 +161,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) SetupWithManager(ctx context.Contex
 		return fmt.Errorf("creating controller: %w", err)
 	}
 
-	clusterToObjectFunc, err := util.ClusterToTypedObjectsMapper(r.Client, &infrav1exp.GCPKCCManagedMachinePoolList{}, mgr.GetScheme())
+	clusterToObjectFunc, err := util.ClusterToTypedObjectsMapper(r.Client, &infrav1v2.GCPKCCManagedMachinePoolList{}, mgr.GetScheme())
 	if err != nil {
 		return fmt.Errorf("failed to create mapper for Cluster to GCPKCCManagedMachinePools: %w", err)
 	}
@@ -207,7 +207,7 @@ func machinePoolToKCCInfrastructureMapFunc(gvk schema.GroupVersionKind) handler.
 // pools in the cluster that reference GCPKCCManagedMachinePool.
 func controlPlaneToKCCMachinePoolMapFunc(c client.Client, gvk schema.GroupVersionKind, log logr.Logger) handler.MapFunc {
 	return func(ctx context.Context, o client.Object) []reconcile.Request {
-		kccCP, ok := o.(*infrav1exp.GCPKCCManagedControlPlane)
+		kccCP, ok := o.(*infrav1v2.GCPKCCManagedControlPlane)
 		if !ok {
 			panic(fmt.Sprintf("Expected a GCPKCCManagedControlPlane but got a %T", o))
 		}
@@ -245,12 +245,12 @@ func controlPlaneToKCCMachinePoolMapFunc(c client.Client, gvk schema.GroupVersio
 	}
 }
 
-func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context, kccMMP *infrav1exp.GCPKCCManagedMachinePool, machinePool *clusterv1.MachinePool, cluster *clusterv1.Cluster) (ctrl.Result, error) {
+func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context, kccMMP *infrav1v2.GCPKCCManagedMachinePool, machinePool *clusterv1.MachinePool, cluster *clusterv1.Cluster) (ctrl.Result, error) {
 	log := log.FromContext(ctx).WithValues("controller", "gcpkccmanagedmachinepool")
 	log.Info("Reconciling GCPKCCManagedMachinePool")
 
 	// 1. Add finalizer.
-	if controllerutil.AddFinalizer(kccMMP, infrav1exp.KCCManagedMachinePoolFinalizer) {
+	if controllerutil.AddFinalizer(kccMMP, infrav1v2.KCCManagedMachinePoolFinalizer) {
 		patchBase := client.MergeFrom(kccMMP.DeepCopy())
 		if err := r.Patch(ctx, kccMMP, patchBase); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to add finalizer: %w", err)
@@ -258,7 +258,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 	}
 
 	// 2. Get GCPKCCManagedControlPlane, gate on controlPlaneInitialized.
-	kccCP := &infrav1exp.GCPKCCManagedControlPlane{}
+	kccCP := &infrav1v2.GCPKCCManagedControlPlane{}
 	controlPlaneRef := types.NamespacedName{
 		Name:      cluster.Spec.ControlPlaneRef.Name,
 		Namespace: cluster.Namespace,
@@ -270,7 +270,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 	if kccCP.Status.Initialization == nil || kccCP.Status.Initialization.ControlPlaneInitialized == nil || !*kccCP.Status.Initialization.ControlPlaneInitialized {
 		log.Info("Waiting for control plane to be initialized")
 		apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
-			Type:    infrav1exp.ReadyCondition,
+			Type:    infrav1v2.ReadyCondition,
 			Status:  metav1.ConditionFalse,
 			Reason:  clusterv1.WaitingForControlPlaneInitializedReason,
 			Message: "Waiting for control plane to be initialized",
@@ -279,7 +279,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 	}
 
 	// 3. Get GCPKCCManagedCluster for location defaulting.
-	kccInfraCluster := &infrav1exp.GCPKCCManagedCluster{}
+	kccInfraCluster := &infrav1v2.GCPKCCManagedCluster{}
 	infraClusterRef := types.NamespacedName{
 		Name:      cluster.Spec.InfrastructureRef.Name,
 		Namespace: cluster.Namespace,
@@ -290,7 +290,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 
 	// 4. Read the live KCC ContainerCluster for location (populated via state-into-spec: merge).
 	existingCluster := &unstructured.Unstructured{}
-	existingCluster.SetGroupVersionKind(infrav1exp.ContainerClusterGVK)
+	existingCluster.SetGroupVersionKind(infrav1v2.ContainerClusterGVK)
 	if err := r.Get(ctx, types.NamespacedName{Name: kccCP.Status.ClusterName, Namespace: kccMMP.Namespace}, existingCluster); err != nil {
 		return ctrl.Result{}, fmt.Errorf("getting KCC ContainerCluster: %w", err)
 	}
@@ -298,7 +298,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 	// 5. Apply defaults and CAPI overrides.
 	if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP, existingCluster, kccInfraCluster); err != nil {
 		apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
-			Type:    infrav1exp.ReadyCondition,
+			Type:    infrav1v2.ReadyCondition,
 			Status:  metav1.ConditionFalse,
 			Reason:  "ConfigurationError",
 			Message: err.Error(),
@@ -307,15 +307,15 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 	}
 
 	// 6. Convert to unstructured ContainerNodePool.
-	containerNodePoolU, err := infrav1exp.ToUnstructured(kccMMP.Spec.NodePool, infrav1exp.ContainerNodePoolGVK)
+	containerNodePoolU, err := infrav1v2.ToUnstructured(kccMMP.Spec.NodePool, infrav1v2.ContainerNodePoolGVK)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("converting ContainerNodePool to unstructured: %w", err)
 	}
 
 	// 5. Set owner ref, create or patch.
 	kccMMPGVK := schema.GroupVersionKind{
-		Group:   infrav1exp.GroupVersion.Group,
-		Version: infrav1exp.GroupVersion.Version,
+		Group:   infrav1v2.GroupVersion.Group,
+		Version: infrav1v2.GroupVersion.Version,
 		Kind:    "GCPKCCManagedMachinePool",
 	}
 	if err := setKCCOwnerReference(kccMMP, kccMMPGVK, containerNodePoolU); err != nil {
@@ -328,7 +328,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 
 	// 6. Check readiness.
 	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(infrav1exp.ContainerNodePoolGVK)
+	existing.SetGroupVersionKind(infrav1v2.ContainerNodePoolGVK)
 	if err := r.Get(ctx, types.NamespacedName{Name: containerNodePoolU.GetName(), Namespace: kccMMP.Namespace}, existing); err != nil {
 		return ctrl.Result{}, fmt.Errorf("getting KCC ContainerNodePool: %w", err)
 	}
@@ -338,7 +338,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 	// 7. If ready, set status fields and populate providerIDList from workload cluster.
 	if ready {
 		kccMMP.Status.Ready = true
-		kccMMP.Status.Initialization = &infrav1exp.GCPKCCManagedMachinePoolInitializationStatus{
+		kccMMP.Status.Initialization = &infrav1v2.GCPKCCManagedMachinePoolInitializationStatus{
 			Provisioned: ptr.To(true),
 		}
 		kccMMP.Status.NodePoolName = containerNodePoolU.GetName()
@@ -361,7 +361,13 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 		}
 
 		// Populate providerIDList and readyReplicas from workload cluster nodes.
-		npInfo, err := getNodePoolInfoFromWorkloadCluster(ctx, r.Client, cluster.Name, kccMMP.Namespace, containerNodePoolU.GetName())
+		// Use resourceID as the GKE node pool name (nodes are labeled with it),
+		// falling back to the Kubernetes resource name if resourceID is not set.
+		gkePoolName, _, _ := unstructured.NestedString(existing.Object, "spec", "resourceID")
+		if gkePoolName == "" {
+			gkePoolName = containerNodePoolU.GetName()
+		}
+		npInfo, err := getNodePoolInfoFromWorkloadCluster(ctx, r.Client, cluster.Name, kccMMP.Namespace, gkePoolName)
 		if err != nil {
 			log.Error(err, "Failed to get node pool info from workload cluster, will retry")
 		} else if len(npInfo.ProviderIDList) > 0 {
@@ -371,7 +377,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 		}
 
 		apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
-			Type:    infrav1exp.ReadyCondition,
+			Type:    infrav1v2.ReadyCondition,
 			Status:  metav1.ConditionTrue,
 			Reason:  clusterv1.ReadyReason,
 			Message: "KCC ContainerNodePool is ready",
@@ -387,7 +393,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 		msg = "KCC ContainerNodePool is not yet ready"
 	}
 	apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
-		Type:    infrav1exp.ReadyCondition,
+		Type:    infrav1v2.ReadyCondition,
 		Status:  metav1.ConditionFalse,
 		Reason:  clusterv1.NotReadyReason,
 		Message: msg,
@@ -397,12 +403,12 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 	return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
 }
 
-func (r *GCPKCCManagedMachinePoolReconciler) reconcileDelete(ctx context.Context, kccMMP *infrav1exp.GCPKCCManagedMachinePool) (ctrl.Result, error) {
+func (r *GCPKCCManagedMachinePoolReconciler) reconcileDelete(ctx context.Context, kccMMP *infrav1v2.GCPKCCManagedMachinePool) (ctrl.Result, error) {
 	log := log.FromContext(ctx).WithValues("controller", "gcpkccmanagedmachinepool", "action", "delete")
 	log.Info("Reconciling Delete GCPKCCManagedMachinePool")
 
 	// 1. Delete the ContainerNodePool KCC resource.
-	gone, err := deleteResource(ctx, r.Client, infrav1exp.ContainerNodePoolGVK, getRawName(kccMMP.Spec.NodePool), kccMMP.Namespace)
+	gone, err := deleteResource(ctx, r.Client, infrav1v2.ContainerNodePoolGVK, getRawName(kccMMP.Spec.NodePool), kccMMP.Namespace)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("deleting KCC ContainerNodePool: %w", err)
 	}
@@ -414,7 +420,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileDelete(ctx context.Context
 	}
 
 	// 3. Remove finalizer.
-	controllerutil.RemoveFinalizer(kccMMP, infrav1exp.KCCManagedMachinePoolFinalizer)
+	controllerutil.RemoveFinalizer(kccMMP, infrav1v2.KCCManagedMachinePoolFinalizer)
 	if err := r.Patch(ctx, kccMMP, client.MergeFrom(kccMMP.DeepCopy())); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to remove finalizer: %w", err)
 	}

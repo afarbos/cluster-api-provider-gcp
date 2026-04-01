@@ -36,9 +36,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
+	infrav1v2 "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta2"
 	"sigs.k8s.io/cluster-api-provider-gcp/util/reconciler"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/annotations"
@@ -70,7 +69,7 @@ func (r *GCPKCCManagedClusterReconciler) Reconcile(ctx context.Context, req ctrl
 	log := log.FromContext(ctx)
 
 	// 1. Get GCPKCCManagedCluster.
-	kccCluster := &infrav1exp.GCPKCCManagedCluster{}
+	kccCluster := &infrav1v2.GCPKCCManagedCluster{}
 	if err := r.Get(ctx, req.NamespacedName, kccCluster); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -117,24 +116,24 @@ func (r *GCPKCCManagedClusterReconciler) Reconcile(ctx context.Context, req ctrl
 func (r *GCPKCCManagedClusterReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager, options controller.Options) error {
 	log := ctrl.LoggerFrom(ctx)
 
-	if err := checkKCCCRDsPresent(ctx, mgr.GetClient(), infrav1exp.ComputeNetworkGVK, infrav1exp.ComputeSubnetworkGVK); err != nil {
+	if err := checkKCCCRDsPresent(ctx, mgr.GetClient(), infrav1v2.ComputeNetworkGVK, infrav1v2.ComputeSubnetworkGVK); err != nil {
 		return err
 	}
 
 	networkObj := &unstructured.Unstructured{}
-	networkObj.SetGroupVersionKind(infrav1exp.ComputeNetworkGVK)
+	networkObj.SetGroupVersionKind(infrav1v2.ComputeNetworkGVK)
 
 	subnetworkObj := &unstructured.Unstructured{}
-	subnetworkObj.SetGroupVersionKind(infrav1exp.ComputeSubnetworkGVK)
+	subnetworkObj.SetGroupVersionKind(infrav1v2.ComputeSubnetworkGVK)
 
 	c, err := ctrl.NewControllerManagedBy(mgr).
 		WithOptions(options).
-		For(&infrav1exp.GCPKCCManagedCluster{}).
+		For(&infrav1v2.GCPKCCManagedCluster{}).
 		WithEventFilter(predicates.ResourceNotPausedAndHasFilterLabel(mgr.GetScheme(), log, r.WatchFilterValue)).
 		Owns(networkObj).
 		Owns(subnetworkObj).
 		Watches(
-			&infrav1exp.GCPKCCManagedControlPlane{},
+			&infrav1v2.GCPKCCManagedControlPlane{},
 			handler.EnqueueRequestsFromMapFunc(r.managedControlPlaneMapper(ctx)),
 		).
 		Build(r)
@@ -144,7 +143,7 @@ func (r *GCPKCCManagedClusterReconciler) SetupWithManager(ctx context.Context, m
 
 	if err = c.Watch(
 		source.Kind[client.Object](mgr.GetCache(), &clusterv1.Cluster{},
-			handler.EnqueueRequestsFromMapFunc(util.ClusterToInfrastructureMapFunc(ctx, infrav1exp.GroupVersion.WithKind("GCPKCCManagedCluster"), mgr.GetClient(), &infrav1exp.GCPKCCManagedCluster{})),
+			handler.EnqueueRequestsFromMapFunc(util.ClusterToInfrastructureMapFunc(ctx, infrav1v2.GroupVersion.WithKind("GCPKCCManagedCluster"), mgr.GetClient(), &infrav1v2.GCPKCCManagedCluster{})),
 			predicates.ClusterUnpaused(mgr.GetScheme(), log),
 		)); err != nil {
 		return fmt.Errorf("adding watch for ready clusters: %w", err)
@@ -156,7 +155,7 @@ func (r *GCPKCCManagedClusterReconciler) SetupWithManager(ctx context.Context, m
 func (r *GCPKCCManagedClusterReconciler) managedControlPlaneMapper(ctx context.Context) handler.MapFunc {
 	return func(ctx context.Context, o client.Object) []ctrl.Request {
 		log := ctrl.LoggerFrom(ctx)
-		gcpManagedControlPlane, ok := o.(*infrav1exp.GCPKCCManagedControlPlane)
+		gcpManagedControlPlane, ok := o.(*infrav1v2.GCPKCCManagedControlPlane)
 		if !ok {
 			log.Error(fmt.Errorf("expected a GCPKCCManagedControlPlane, got %T instead", o), "failed to map GCPKCCManagedControlPlane")
 			return nil
@@ -196,12 +195,12 @@ func (r *GCPKCCManagedClusterReconciler) managedControlPlaneMapper(ctx context.C
 	}
 }
 
-func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kccCluster *infrav1exp.GCPKCCManagedCluster, cluster *clusterv1.Cluster) (ctrl.Result, error) {
+func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kccCluster *infrav1v2.GCPKCCManagedCluster, cluster *clusterv1.Cluster) (ctrl.Result, error) {
 	log := log.FromContext(ctx).WithValues("controller", "gcpkccmanagedcluster")
 	log.Info("Reconciling GCPKCCManagedCluster")
 
 	// 1. Add finalizer.
-	if controllerutil.AddFinalizer(kccCluster, infrav1exp.KCCClusterFinalizer) {
+	if controllerutil.AddFinalizer(kccCluster, infrav1v2.KCCClusterFinalizer) {
 		patchBase := client.MergeFrom(kccCluster.DeepCopy())
 		if err := r.Patch(ctx, kccCluster, patchBase); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to add finalizer: %w", err)
@@ -209,9 +208,9 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 	}
 
 	// 2. Get GCPKCCManagedControlPlane for endpoint propagation (optional, may not exist yet).
-	var controlPlane *infrav1exp.GCPKCCManagedControlPlane
+	var controlPlane *infrav1v2.GCPKCCManagedControlPlane
 	if cluster.Spec.ControlPlaneRef.IsDefined() {
-		controlPlane = &infrav1exp.GCPKCCManagedControlPlane{}
+		controlPlane = &infrav1v2.GCPKCCManagedControlPlane{}
 		controlPlaneRef := types.NamespacedName{
 			Name:      cluster.Spec.ControlPlaneRef.Name,
 			Namespace: cluster.Namespace,
@@ -231,17 +230,17 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 
 	// 4. Convert to unstructured KCC resources.
 	kccClusterGVK := schema.GroupVersionKind{
-		Group:   infrav1exp.GroupVersion.Group,
-		Version: infrav1exp.GroupVersion.Version,
+		Group:   infrav1v2.GroupVersion.Group,
+		Version: infrav1v2.GroupVersion.Version,
 		Kind:    "GCPKCCManagedCluster",
 	}
 
-	networkU, err := infrav1exp.ToUnstructured(kccCluster.Spec.Network, infrav1exp.ComputeNetworkGVK)
+	networkU, err := infrav1v2.ToUnstructured(kccCluster.Spec.Network, infrav1v2.ComputeNetworkGVK)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("converting network to unstructured: %w", err)
 	}
 
-	subnetworkU, err := infrav1exp.ToUnstructured(kccCluster.Spec.Subnetwork, infrav1exp.ComputeSubnetworkGVK)
+	subnetworkU, err := infrav1v2.ToUnstructured(kccCluster.Spec.Subnetwork, infrav1v2.ComputeSubnetworkGVK)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("converting subnetwork to unstructured: %w", err)
 	}
@@ -264,13 +263,13 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 
 	// 7. Check readiness of KCC resources.
 	existingNetwork := &unstructured.Unstructured{}
-	existingNetwork.SetGroupVersionKind(infrav1exp.ComputeNetworkGVK)
+	existingNetwork.SetGroupVersionKind(infrav1v2.ComputeNetworkGVK)
 	if err := r.Get(ctx, types.NamespacedName{Name: networkU.GetName(), Namespace: kccCluster.Namespace}, existingNetwork); err != nil {
 		return ctrl.Result{}, fmt.Errorf("getting KCC ComputeNetwork: %w", err)
 	}
 
 	existingSubnetwork := &unstructured.Unstructured{}
-	existingSubnetwork.SetGroupVersionKind(infrav1exp.ComputeSubnetworkGVK)
+	existingSubnetwork.SetGroupVersionKind(infrav1v2.ComputeSubnetworkGVK)
 	if err := r.Get(ctx, types.NamespacedName{Name: subnetworkU.GetName(), Namespace: kccCluster.Namespace}, existingSubnetwork); err != nil {
 		return ctrl.Result{}, fmt.Errorf("getting KCC ComputeSubnetwork: %w", err)
 	}
@@ -281,14 +280,14 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 	// 8. Update status based on readiness.
 	if networkReady && subnetworkReady {
 		kccCluster.Status.Ready = true
-		kccCluster.Status.Initialization = &infrav1exp.GCPKCCManagedClusterInitializationStatus{
+		kccCluster.Status.Initialization = &infrav1v2.GCPKCCManagedClusterInitializationStatus{
 			Provisioned: ptr.To(true),
 		}
 		kccCluster.Status.NetworkName = networkU.GetName()
 		kccCluster.Status.SubnetworkName = subnetworkU.GetName()
 
 		apimeta.SetStatusCondition(&kccCluster.Status.Conditions, metav1.Condition{
-			Type:    infrav1exp.ReadyCondition,
+			Type:    infrav1v2.ReadyCondition,
 			Status:  metav1.ConditionTrue,
 			Reason:  clusterv1.ReadyReason,
 			Message: "KCC network resources are ready",
@@ -320,7 +319,7 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 		msg = fmt.Sprintf("KCC ComputeSubnetwork: %s", subnetworkMsg)
 	}
 	apimeta.SetStatusCondition(&kccCluster.Status.Conditions, metav1.Condition{
-		Type:    infrav1exp.ReadyCondition,
+		Type:    infrav1v2.ReadyCondition,
 		Status:  metav1.ConditionFalse,
 		Reason:  clusterv1.NotReadyReason,
 		Message: msg,
@@ -331,10 +330,10 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 }
 
 // getFailureDomains fetches the KCC ContainerCluster and reads spec.nodeLocations
-// (populated via state-into-spec: merge) to build the failure domains map.
-func (r *GCPKCCManagedClusterReconciler) getFailureDomains(ctx context.Context, clusterName, namespace string) (clusterv1beta1.FailureDomains, error) {
+// (populated via state-into-spec: merge) to build the failure domains list.
+func (r *GCPKCCManagedClusterReconciler) getFailureDomains(ctx context.Context, clusterName, namespace string) ([]clusterv1.FailureDomain, error) {
 	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(infrav1exp.ContainerClusterGVK)
+	existing.SetGroupVersionKind(infrav1v2.ContainerClusterGVK)
 	if err := r.Get(ctx, types.NamespacedName{Name: clusterName, Namespace: namespace}, existing); err != nil {
 		return nil, fmt.Errorf("getting KCC ContainerCluster: %w", err)
 	}
@@ -344,34 +343,32 @@ func (r *GCPKCCManagedClusterReconciler) getFailureDomains(ctx context.Context, 
 		return nil, nil
 	}
 
-	fd := make(clusterv1beta1.FailureDomains, len(nodeLocations))
+	var fd []clusterv1.FailureDomain
 	for _, zone := range nodeLocations {
-		fd[zone] = clusterv1beta1.FailureDomainSpec{
-			ControlPlane: false,
-		}
+		fd = append(fd, clusterv1.FailureDomain{Name: zone})
 	}
 	return fd, nil
 }
 
-func (r *GCPKCCManagedClusterReconciler) reconcileDelete(ctx context.Context, kccCluster *infrav1exp.GCPKCCManagedCluster, cluster *clusterv1.Cluster) (ctrl.Result, error) {
+func (r *GCPKCCManagedClusterReconciler) reconcileDelete(ctx context.Context, kccCluster *infrav1v2.GCPKCCManagedCluster, cluster *clusterv1.Cluster) (ctrl.Result, error) {
 	log := log.FromContext(ctx).WithValues("controller", "gcpkccmanagedcluster", "action", "delete")
 	log.Info("Reconciling Delete GCPKCCManagedCluster")
 
 	// Delete KCC ComputeSubnetwork (delete subnet before network).
-	subnetworkGone, err := deleteResource(ctx, r.Client, infrav1exp.ComputeSubnetworkGVK, getRawName(kccCluster.Spec.Subnetwork), kccCluster.Namespace)
+	subnetworkGone, err := deleteResource(ctx, r.Client, infrav1v2.ComputeSubnetworkGVK, getRawName(kccCluster.Spec.Subnetwork), kccCluster.Namespace)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("deleting KCC ComputeSubnetwork: %w", err)
 	}
 
 	// Delete KCC ComputeNetwork.
-	networkGone, err := deleteResource(ctx, r.Client, infrav1exp.ComputeNetworkGVK, getRawName(kccCluster.Spec.Network), kccCluster.Namespace)
+	networkGone, err := deleteResource(ctx, r.Client, infrav1v2.ComputeNetworkGVK, getRawName(kccCluster.Spec.Network), kccCluster.Namespace)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("deleting KCC ComputeNetwork: %w", err)
 	}
 
 	// If both resources are gone, remove the finalizer.
 	if networkGone && subnetworkGone {
-		controllerutil.RemoveFinalizer(kccCluster, infrav1exp.KCCClusterFinalizer)
+		controllerutil.RemoveFinalizer(kccCluster, infrav1v2.KCCClusterFinalizer)
 		if err := r.Patch(ctx, kccCluster, client.MergeFrom(kccCluster.DeepCopy())); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to remove finalizer: %w", err)
 		}

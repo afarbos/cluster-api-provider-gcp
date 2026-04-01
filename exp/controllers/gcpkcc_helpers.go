@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"golang.org/x/mod/semver"
 
@@ -230,8 +231,9 @@ func isVersionUpToDate(desired, observed string) bool {
 		return true
 	}
 	// semver requires "v" prefix; MajorMinor strips patch/pre-release (e.g., "-gke.1026000").
-	d := semver.MajorMinor("v" + desired)
-	o := semver.MajorMinor("v" + observed)
+	// Handle versions that may already have a "v" prefix (e.g., from topology).
+	d := semver.MajorMinor(ensureVPrefix(desired))
+	o := semver.MajorMinor(ensureVPrefix(observed))
 	if d == "" || o == "" {
 		return false
 	}
@@ -244,6 +246,25 @@ func boolToReplicaCount(b bool) *int32 {
 		return ptr.To(int32(1))
 	}
 	return ptr.To(int32(0))
+}
+
+// toGKEVersion converts a CAPI semver version to a GKE-compatible version string.
+// Generic versions (e.g., "v1.32.0") are stripped to major.minor ("1.32") so GKE
+// picks the latest patch. Specific GKE versions with a prerelease tag
+// (e.g., "v1.32.0-gke.1026000") are kept intact with only the "v" prefix removed.
+func toGKEVersion(version string) string {
+	v := ensureVPrefix(version)
+	if semver.Prerelease(v) != "" {
+		return strings.TrimPrefix(v, "v")
+	}
+	return strings.TrimPrefix(semver.MajorMinor(v), "v")
+}
+
+func ensureVPrefix(v string) string {
+	if strings.HasPrefix(v, "v") {
+		return v
+	}
+	return "v" + v
 }
 
 // isNodeReady returns true if the node has condition Ready=True.

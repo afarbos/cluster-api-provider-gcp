@@ -37,6 +37,7 @@ import (
 	infrav1beta1 "sigs.k8s.io/cluster-api-provider-gcp/api/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-gcp/controllers"
 	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
+	infrav1v2 "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta2"
 	gkebootstrapv1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/bootstrap/gke/api/v1beta1"
 	gkeboostrapcontrollersv1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/bootstrap/gke/controllers"
 	expcontrollers "sigs.k8s.io/cluster-api-provider-gcp/exp/controllers"
@@ -69,6 +70,7 @@ func init() {
 	_ = infrav1beta1.AddToScheme(scheme)
 	_ = clusterv1.AddToScheme(scheme)
 	_ = infrav1exp.AddToScheme(scheme)
+	_ = infrav1v2.AddToScheme(scheme)
 	_ = gkebootstrapv1exp.AddToScheme(scheme)
 	// +kubebuilder:scaffold:scheme
 }

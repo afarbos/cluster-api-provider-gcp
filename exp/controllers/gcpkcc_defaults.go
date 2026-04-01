@@ -23,7 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	infrav1exp "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta1"
+	infrav1v2 "sigs.k8s.io/cluster-api-provider-gcp/exp/api/v1beta2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
@@ -137,7 +137,7 @@ func upsertSecondaryIPRange(ranges []interface{}, rangeName, ipCidrRange string)
 
 // applyClusterDefaults sets defaults and CAPI overrides on the network and
 // subnetwork KCC resources for the given GCPKCCManagedCluster.
-func applyClusterDefaults(kccCluster *infrav1exp.GCPKCCManagedCluster, cluster *clusterv1.Cluster) error {
+func applyClusterDefaults(kccCluster *infrav1v2.GCPKCCManagedCluster, cluster *clusterv1.Cluster) error {
 	// --- Network ---
 	netMap, err := rawToMap(kccCluster.Spec.Network)
 	if err != nil {
@@ -196,7 +196,7 @@ func applyClusterDefaults(kccCluster *infrav1exp.GCPKCCManagedCluster, cluster *
 
 // applyControlPlaneDefaults sets defaults and CAPI overrides on the ContainerCluster
 // KCC resource for the given GCPKCCManagedControlPlane.
-func applyControlPlaneDefaults(kccCP *infrav1exp.GCPKCCManagedControlPlane, cluster *clusterv1.Cluster, infraCluster *infrav1exp.GCPKCCManagedCluster) error {
+func applyControlPlaneDefaults(kccCP *infrav1v2.GCPKCCManagedControlPlane, cluster *clusterv1.Cluster, infraCluster *infrav1v2.GCPKCCManagedCluster) error {
 	ccMap, err := rawToMap(kccCP.Spec.ContainerCluster)
 	if err != nil {
 		return fmt.Errorf("parsing container cluster: %w", err)
@@ -244,18 +244,21 @@ func applyControlPlaneDefaults(kccCP *infrav1exp.GCPKCCManagedControlPlane, clus
 
 	// Version override: CAPI version -> minMasterVersion
 	if kccCP.Spec.Version != nil && *kccCP.Spec.Version != "" {
-		spec["minMasterVersion"] = *kccCP.Spec.Version
+		spec["minMasterVersion"] = toGKEVersion(*kccCP.Spec.Version)
 	}
 
-	// Set annotations: remove default node pool + enable state-into-spec merge
-	// so KCC populates spec fields (like nodeLocations) from GCP state.
 	annotations, _ := md["annotations"].(map[string]interface{})
 	if annotations == nil {
 		annotations = map[string]interface{}{}
 		md["annotations"] = annotations
 	}
+	// Always remove the default node pool — actual nodes are managed via MachinePool.
 	annotations[kccRemoveDefaultNodePoolAnnotation] = "true"
-	annotations[kccStateIntoSpecAnnotation] = "merge"
+	// Enable state-into-spec merge only when nodeLocations is not explicitly set,
+	// so KCC populates it from GCP state (used for failureDomains and node pool location).
+	if _, hasNodeLocations := spec["nodeLocations"]; !hasNodeLocations {
+		annotations[kccStateIntoSpecAnnotation] = "merge"
+	}
 
 	kccCP.Spec.ContainerCluster, err = mapToRaw(ccMap)
 	return err
@@ -263,7 +266,7 @@ func applyControlPlaneDefaults(kccCP *infrav1exp.GCPKCCManagedControlPlane, clus
 
 // applyMachinePoolDefaults sets defaults and CAPI overrides on the ContainerNodePool
 // KCC resource for the given GCPKCCManagedMachinePool.
-func applyMachinePoolDefaults(kccMMP *infrav1exp.GCPKCCManagedMachinePool, machinePool *clusterv1.MachinePool, controlPlane *infrav1exp.GCPKCCManagedControlPlane, existingCluster *unstructured.Unstructured, infraCluster *infrav1exp.GCPKCCManagedCluster) error {
+func applyMachinePoolDefaults(kccMMP *infrav1v2.GCPKCCManagedMachinePool, machinePool *clusterv1.MachinePool, controlPlane *infrav1v2.GCPKCCManagedControlPlane, existingCluster *unstructured.Unstructured, infraCluster *infrav1v2.GCPKCCManagedCluster) error {
 	npMap, err := rawToMap(kccMMP.Spec.NodePool)
 	if err != nil {
 		return fmt.Errorf("parsing nodepool: %w", err)
@@ -275,14 +278,6 @@ func applyMachinePoolDefaults(kccMMP *infrav1exp.GCPKCCManagedMachinePool, machi
 	if md["namespace"] == nil || md["namespace"] == "" {
 		md["namespace"] = kccMMP.Namespace
 	}
-
-	// Enable state-into-spec merge for actual node count in status.replicas
-	annotations, _ := md["annotations"].(map[string]interface{})
-	if annotations == nil {
-		annotations = map[string]interface{}{}
-		md["annotations"] = annotations
-	}
-	annotations[kccStateIntoSpecAnnotation] = "merge"
 
 	spec := getRawSpec(npMap)
 	if _, ok := spec["clusterRef"]; !ok {
@@ -306,7 +301,7 @@ func applyMachinePoolDefaults(kccMMP *infrav1exp.GCPKCCManagedMachinePool, machi
 		spec["nodeLocations"] = locs
 	}
 	if machinePool.Spec.Template.Spec.Version != "" {
-		spec["version"] = machinePool.Spec.Template.Spec.Version
+		spec["version"] = toGKEVersion(machinePool.Spec.Template.Spec.Version)
 	}
 
 	// CAPI overrides: replicas → nodeCount (with autoscaling awareness)
@@ -334,7 +329,6 @@ func applyMachinePoolDefaults(kccMMP *infrav1exp.GCPKCCManagedMachinePool, machi
 			}
 			perZone := replicas / numZones
 			spec["nodeCount"] = perZone
-			setIfAbsent(spec, "initialNodeCount", perZone)
 		}
 	}
 

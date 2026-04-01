@@ -14,12 +14,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1beta1
+package v1beta2
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	clusterv1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 const (
@@ -43,7 +43,7 @@ type GCPKCCManagedClusterSpec struct {
 
 	// ControlPlaneEndpoint represents the endpoint used to communicate with the control plane.
 	// +optional
-	ControlPlaneEndpoint clusterv1beta1.APIEndpoint `json:"controlPlaneEndpoint,omitempty"`
+	ControlPlaneEndpoint clusterv1.APIEndpoint `json:"controlPlaneEndpoint,omitempty"`
 }
 
 // GCPKCCManagedClusterStatus defines the observed state of GCPKCCManagedCluster.
@@ -58,7 +58,9 @@ type GCPKCCManagedClusterStatus struct {
 
 	// FailureDomains defines the failure domains for the cluster.
 	// +optional
-	FailureDomains clusterv1beta1.FailureDomains `json:"failureDomains,omitempty"`
+	// +listType=map
+	// +listMapKey=name
+	FailureDomains []clusterv1.FailureDomain `json:"failureDomains,omitempty"`
 
 	// Conditions defines current state of the GCPKCCManagedCluster.
 	// +optional
