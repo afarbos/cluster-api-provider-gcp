@@ -270,7 +270,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 	if kccCP.Status.Initialization == nil || kccCP.Status.Initialization.ControlPlaneInitialized == nil || !*kccCP.Status.Initialization.ControlPlaneInitialized {
 		log.Info("Waiting for control plane to be initialized")
 		apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
-			Type:    infrav1v2.ReadyCondition,
+			Type:    clusterv1.ReadyCondition,
 			Status:  metav1.ConditionFalse,
 			Reason:  clusterv1.WaitingForControlPlaneInitializedReason,
 			Message: "Waiting for control plane to be initialized",
@@ -298,7 +298,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 	// 5. Apply defaults and CAPI overrides.
 	if err := applyMachinePoolDefaults(kccMMP, machinePool, kccCP, existingCluster, kccInfraCluster); err != nil {
 		apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
-			Type:    infrav1v2.ReadyCondition,
+			Type:    clusterv1.ReadyCondition,
 			Status:  metav1.ConditionFalse,
 			Reason:  infrav1v2.ConfigurationErrorReason,
 			Message: err.Error(),
@@ -376,7 +376,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 		}
 
 		apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
-			Type:    infrav1v2.ReadyCondition,
+			Type:    clusterv1.ReadyCondition,
 			Status:  metav1.ConditionTrue,
 			Reason:  clusterv1.ReadyReason,
 			Message: "KCC ContainerNodePool is ready",
@@ -392,7 +392,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 		msg = "KCC ContainerNodePool is not yet ready"
 	}
 	apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
-		Type:    infrav1v2.ReadyCondition,
+		Type:    clusterv1.ReadyCondition,
 		Status:  metav1.ConditionFalse,
 		Reason:  clusterv1.NotReadyReason,
 		Message: msg,

@@ -287,7 +287,7 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 		kccCluster.Status.SubnetworkName = subnetworkU.GetName()
 
 		apimeta.SetStatusCondition(&kccCluster.Status.Conditions, metav1.Condition{
-			Type:    infrav1v2.ReadyCondition,
+			Type:    clusterv1.ReadyCondition,
 			Status:  metav1.ConditionTrue,
 			Reason:  clusterv1.ReadyReason,
 			Message: "KCC network resources are ready",
@@ -319,7 +319,7 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 		msg = fmt.Sprintf("KCC ComputeSubnetwork: %s", subnetworkMsg)
 	}
 	apimeta.SetStatusCondition(&kccCluster.Status.Conditions, metav1.Condition{
-		Type:    infrav1v2.ReadyCondition,
+		Type:    clusterv1.ReadyCondition,
 		Status:  metav1.ConditionFalse,
 		Reason:  clusterv1.NotReadyReason,
 		Message: msg,
@@ -328,6 +328,8 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 	log.Info("KCC resources not yet ready, requeueing", "networkReady", networkReady, "subnetworkReady", subnetworkReady)
 	return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
 }
+
+So, for machine pool, we could use merge labels and annotations from spec.template.metadata,
 
 // getFailureDomains fetches the KCC ContainerCluster and reads spec.nodeLocations
 // (populated via state-into-spec: merge) to build the failure domains list.

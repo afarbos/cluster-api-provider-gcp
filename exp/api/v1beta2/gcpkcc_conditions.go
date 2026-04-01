@@ -18,9 +18,6 @@ package v1beta2
 
 // KCC condition types and reasons.
 const (
-	// ReadyCondition is the overall Ready condition for KCC resources.
-	ReadyCondition string = "Ready"
-
 	// KCCDegradedCondition indicates the resource is in a degraded state.
 	KCCDegradedCondition = "Degraded"
 

@@ -183,7 +183,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 	if kccInfraCluster.Status.Initialization == nil || kccInfraCluster.Status.Initialization.Provisioned == nil || !*kccInfraCluster.Status.Initialization.Provisioned {
 		log.Info("Waiting for infrastructure cluster to be provisioned")
 		apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{
-			Type:    infrav1v2.ReadyCondition,
+			Type:    clusterv1.ReadyCondition,
 			Status:  metav1.ConditionFalse,
 			Reason:  clusterv1.WaitingForClusterInfrastructureReadyReason,
 			Message: "Waiting for infrastructure cluster to be provisioned",
@@ -234,7 +234,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 		if endpoint == "" || caCert == "" {
 			log.Info("KCC ContainerCluster is ready but endpoint or CA cert not yet available, requeueing")
 			apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{
-				Type:    infrav1v2.ReadyCondition,
+				Type:    clusterv1.ReadyCondition,
 				Status:  metav1.ConditionFalse,
 				Reason:  clusterv1.NotReadyReason,
 				Message: "Waiting for endpoint and CA certificate",
@@ -270,7 +270,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 		kccCP.Status.UpToDateReplicas = boolToReplicaCount(isVersionUpToDate(ptr.Deref(kccCP.Spec.Version, ""), masterVersion))
 
 		apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{
-			Type:    infrav1v2.ReadyCondition,
+			Type:    clusterv1.ReadyCondition,
 			Status:  metav1.ConditionTrue,
 			Reason:  clusterv1.ReadyReason,
 			Message: "KCC ContainerCluster is ready",
@@ -286,7 +286,7 @@ func (r *GCPKCCManagedControlPlaneReconciler) reconcileNormal(ctx context.Contex
 		msg = "KCC ContainerCluster is not yet ready"
 	}
 	apimeta.SetStatusCondition(&kccCP.Status.Conditions, metav1.Condition{
-		Type:    infrav1v2.ReadyCondition,
+		Type:    clusterv1.ReadyCondition,
 		Status:  metav1.ConditionFalse,
 		Reason:  clusterv1.NotReadyReason,
 		Message: msg,
