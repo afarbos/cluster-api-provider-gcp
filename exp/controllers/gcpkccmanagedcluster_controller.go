@@ -329,8 +329,6 @@ func (r *GCPKCCManagedClusterReconciler) reconcileNormal(ctx context.Context, kc
 	return ctrl.Result{RequeueAfter: reconciler.DefaultRetryTime}, nil
 }
 
-So, for machine pool, we could use merge labels and annotations from spec.template.metadata,
-
 // getFailureDomains fetches the KCC ContainerCluster and reads spec.nodeLocations
 // (populated via state-into-spec: merge) to build the failure domains list.
 func (r *GCPKCCManagedClusterReconciler) getFailureDomains(ctx context.Context, clusterName, namespace string) ([]clusterv1.FailureDomain, error) {

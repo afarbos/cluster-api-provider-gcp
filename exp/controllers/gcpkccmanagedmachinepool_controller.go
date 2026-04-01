@@ -343,18 +343,6 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 		}
 		kccMMP.Status.NodePoolName = containerNodePoolU.GetName()
 
-		// Read per-zone node count from KCC resource (populated via
-		// state-into-spec merge) as fallback. Multiply by zone count for total.
-		nodeCount, nodeCountFound, _ := unstructured.NestedInt64(existing.Object, "spec", "nodeCount")
-		if nodeCountFound {
-			total := int32(nodeCount)
-			nodeLocs, found, _ := unstructured.NestedStringSlice(existing.Object, "spec", "nodeLocations")
-			if found && len(nodeLocs) > 0 {
-				total *= int32(len(nodeLocs))
-			}
-			kccMMP.Status.Replicas = total
-		}
-
 		// Read observed version from the KCC ContainerNodePool.
 		if version, _ := getStatusFieldFromUnstructured(existing, "observedState", "version"); version != "" {
 			kccMMP.Status.Version = &version
