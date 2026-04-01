@@ -163,10 +163,9 @@ func checkKCCCRDsPresent(ctx context.Context, c client.Client, gvks ...schema.Gr
 	return nil
 }
 
-// nodePoolInfo contains the provider ID list and ready replica count for a node pool.
+// nodePoolInfo contains the provider ID list and replica count for a node pool.
 type nodePoolInfo struct {
 	ProviderIDList []string
-	ReadyReplicas  int32
 	Replicas       int32
 }
 
@@ -212,9 +211,6 @@ func getNodePoolInfoFromWorkloadCluster(ctx context.Context, mgmtClient client.C
 			info.ProviderIDList = append(info.ProviderIDList, node.Spec.ProviderID)
 		}
 		info.Replicas++
-		if isNodeReady(node) {
-			info.ReadyReplicas++
-		}
 	}
 
 	// Sort for deterministic output.
@@ -267,12 +263,3 @@ func ensureVPrefix(v string) string {
 	return "v" + v
 }
 
-// isNodeReady returns true if the node has condition Ready=True.
-func isNodeReady(node *corev1.Node) bool {
-	for _, c := range node.Status.Conditions {
-		if c.Type == corev1.NodeReady {
-			return c.Status == corev1.ConditionTrue
-		}
-	}
-	return false
-}

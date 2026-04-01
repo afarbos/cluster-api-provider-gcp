@@ -53,10 +53,6 @@ type GCPKCCManagedMachinePoolStatus struct {
 	// +optional
 	Replicas int32 `json:"replicas,omitempty"`
 
-	// ReadyReplicas is the number of ready replicas.
-	// +optional
-	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
-
 	// Version is the observed Kubernetes version of the node pool.
 	// +optional
 	Version *string `json:"version,omitempty"`

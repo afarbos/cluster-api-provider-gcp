@@ -32,4 +32,7 @@ const (
 	KCCResourceCreatingReason      = "KCCResourceCreating"
 	KCCDeletionTimeoutReason       = "DeletionTimeout"
 	KCCReconciliationTimeoutReason = "ReconciliationTimeout"
+
+	// ConfigurationErrorReason indicates a user configuration error prevented reconciliation.
+	ConfigurationErrorReason = "ConfigurationError"
 )

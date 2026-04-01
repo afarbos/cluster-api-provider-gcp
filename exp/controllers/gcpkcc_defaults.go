@@ -95,6 +95,23 @@ func getRawName(raw *runtime.RawExtension) string {
 	return getRawMetadataString(m, "name")
 }
 
+// replicasPerZone divides total replicas by zone count and validates divisibility.
+func replicasPerZone(replicas int64, machinePool *clusterv1.MachinePool, infraCluster *infrav1v2.GCPKCCManagedCluster) (int64, error) {
+	var numZones int64
+	switch {
+	case len(machinePool.Spec.FailureDomains) > 0:
+		numZones = int64(len(machinePool.Spec.FailureDomains))
+	case len(infraCluster.Status.FailureDomains) > 0:
+		numZones = int64(len(infraCluster.Status.FailureDomains))
+	default:
+		return 0, fmt.Errorf("cannot determine zone count: neither MachinePool.spec.failureDomains nor infrastructure cluster failureDomains are set; waiting for infrastructure to be ready")
+	}
+	if replicas%numZones != 0 {
+		return 0, fmt.Errorf("replicas (%d) must be a multiple of zone count (%d)", replicas, numZones)
+	}
+	return replicas / numZones, nil
+}
+
 // getAutoscaling returns the autoscaling map from the node pool spec, or nil
 // if autoscaling is not configured.
 func getAutoscaling(spec map[string]interface{}) map[string]interface{} {
@@ -308,26 +325,25 @@ func applyMachinePoolDefaults(kccMMP *infrav1v2.GCPKCCManagedMachinePool, machin
 	if machinePool.Spec.Replicas != nil {
 		replicas := int64(*machinePool.Spec.Replicas)
 		if autoscaling := getAutoscaling(spec); autoscaling != nil {
-			// Autoscaling mode: map replicas to totalMinNodeCount.
-			// The autoscaler manages actual node count; skip nodeCount override.
-			autoscaling["totalMinNodeCount"] = replicas
+			// Autoscaling mode: set the min from replicas, matching whichever
+			// max style the user chose (per-zone or total).
+			// GKE rejects mixing per-zone and total fields.
+			if _, hasPerZoneMax := autoscaling["maxNodeCount"]; hasPerZoneMax {
+				perZone, err := replicasPerZone(replicas, machinePool, infraCluster)
+				if err != nil {
+					return err
+				}
+				autoscaling["minNodeCount"] = perZone
+			} else {
+				// Total style (totalMaxNodeCount set, or no max at all).
+				autoscaling["totalMinNodeCount"] = replicas
+			}
 		} else {
-			// Determine zone count for per-zone division.
-			// GKE's nodeCount/initialNodeCount is per-zone; CAPI replicas is total.
-			var numZones int64
-			switch {
-			case len(machinePool.Spec.FailureDomains) > 0:
-				numZones = int64(len(machinePool.Spec.FailureDomains))
-			case len(infraCluster.Status.FailureDomains) > 0:
-				numZones = int64(len(infraCluster.Status.FailureDomains))
-			default:
-				return fmt.Errorf("cannot determine zone count: neither MachinePool.spec.failureDomains nor infrastructure cluster failureDomains are set; waiting for infrastructure to be ready")
+			// Non-autoscaling: GKE's nodeCount is per-zone; CAPI replicas is total.
+			perZone, err := replicasPerZone(replicas, machinePool, infraCluster)
+			if err != nil {
+				return err
 			}
-			if replicas%numZones != 0 {
-				return fmt.Errorf("replicas (%d) must be a multiple of zone count (%d)",
-					replicas, numZones)
-			}
-			perZone := replicas / numZones
 			spec["nodeCount"] = perZone
 		}
 	}

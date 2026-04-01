@@ -300,7 +300,7 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 		apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
 			Type:    infrav1v2.ReadyCondition,
 			Status:  metav1.ConditionFalse,
-			Reason:  "ConfigurationError",
+			Reason:  infrav1v2.ConfigurationErrorReason,
 			Message: err.Error(),
 		})
 		return ctrl.Result{}, fmt.Errorf("applying defaults: %w", err)
@@ -373,7 +373,6 @@ func (r *GCPKCCManagedMachinePoolReconciler) reconcileNormal(ctx context.Context
 		} else if len(npInfo.ProviderIDList) > 0 {
 			kccMMP.Spec.ProviderIDList = npInfo.ProviderIDList
 			kccMMP.Status.Replicas = npInfo.Replicas
-			kccMMP.Status.ReadyReplicas = npInfo.ReadyReplicas
 		}
 
 		apimeta.SetStatusCondition(&kccMMP.Status.Conditions, metav1.Condition{
